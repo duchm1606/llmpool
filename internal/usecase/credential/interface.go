@@ -2,6 +2,7 @@ package credential
 
 import (
 	"context"
+	"time"
 
 	domaincredential "github.com/duchoang/llmpool/internal/domain/credential"
 )
@@ -18,18 +19,11 @@ type Repository interface {
 }
 
 type Refresher interface {
-	Refresh(ctx context.Context, profile domaincredential.Profile) (domaincredential.Secret, error)
-}
-
-type ImportInput struct {
-	ProviderHint string
-	Label        string
-	Source       string
-	Payload      CredentialPayload
+	Refresh(ctx context.Context, profile domaincredential.Profile) (string, time.Time, error)
 }
 
 type ImportService interface {
-	Import(ctx context.Context, input ImportInput) (domaincredential.Profile, error)
+	Import(ctx context.Context, profile CredentialProfile) (domaincredential.Profile, error)
 }
 
 type RefreshService interface {

@@ -8,7 +8,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func NewRouter(logger *zap.Logger, healthService usecasehealth.Service, importService usecasecredential.ImportService) *gin.Engine {
+func NewRouter(logger *zap.Logger, healthService usecasehealth.Service, importService usecasecredential.ImportService, refreshService usecasecredential.RefreshService) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 
 	r := gin.New()
@@ -28,6 +28,9 @@ func NewRouter(logger *zap.Logger, healthService usecasehealth.Service, importSe
 
 	credentialHandler := handler.NewCredentialHandler(importService)
 	r.POST("/v1/internal/auth-profiles/import", credentialHandler.Import)
+
+	refreshHandler := handler.NewRefreshHandler(refreshService)
+	r.POST("/v1/internal/auth-profiles/refresh", refreshHandler.Refresh)
 
 	return r
 }

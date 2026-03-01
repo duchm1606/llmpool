@@ -20,6 +20,10 @@ func (r *MemoryRepository) Save(_ context.Context, profile domaincredential.Prof
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	if profile.ID == "" {
+		profile.ID = profile.AccountID + ":" + profile.Type
+	}
+
 	r.profiles[profile.ID] = profile
 	return profile, nil
 }

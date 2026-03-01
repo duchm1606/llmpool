@@ -61,8 +61,8 @@ func main() {
 		"copilot":     refreshinfra.NewNoopRefresher(),
 	}
 
-	refreshService := usecasecredential.NewRefreshService(profileRepo, refreshers)
-	router := deliveryhttp.NewRouter(logger, healthService, importService)
+	refreshService := usecasecredential.NewRefreshService(profileRepo, refreshers, encryptor)
+	router := deliveryhttp.NewRouter(logger, healthService, importService, refreshService)
 
 	httpServer := server.NewHTTPServer(cfg.Server, router)
 	refreshWorker := server.NewRefreshWorker(refreshService, logger, cfg.Credential.RefreshInterval)

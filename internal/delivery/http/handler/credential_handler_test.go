@@ -19,7 +19,7 @@ type importServiceStub struct {
 	err     error
 }
 
-func (s importServiceStub) Import(_ context.Context, _ usecasecredential.ImportInput) (domaincredential.Profile, error) {
+func (s importServiceStub) Import(_ context.Context, _ usecasecredential.CredentialProfile) (domaincredential.Profile, error) {
 	if s.err != nil {
 		return domaincredential.Profile{}, s.err
 	}
@@ -33,7 +33,7 @@ func TestCredentialHandler_Import_ValidationError(t *testing.T) {
 	r := gin.New()
 	r.POST("/v1/internal/auth-profiles/import", h.Import)
 
-	reqBody := `{"provider":"openai","payload":{"email":"user@example.com"}}`
+	reqBody := `{"type":"openai","email":"user@example.com"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/internal/auth-profiles/import", strings.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -62,24 +62,23 @@ func TestCredentialHandler_Import_ValidationError(t *testing.T) {
 func TestCredentialHandler_Import_Created(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	now := time.Now().UTC()
+	now := time.Now()
 	stub := importServiceStub{profile: domaincredential.Profile{
-		ID:              "p1",
-		Provider:        "openai",
-		Label:           "openai-profile",
-		Email:           "user@example.com",
-		AccountID:       "acc-1",
-		Status:          "active",
-		HasRefreshToken: true,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		ID:               "p1",
+		Type:             "openai",
+		Email:            "user@example.com",
+		AccountID:        "acc-1",
+		Enabled:          true,
+		Expired:          now,
+		LastRefreshAt:    now,
+		EncryptedProfile: "enc:payload",
 	}}
 
 	h := NewCredentialHandler(stub)
 	r := gin.New()
 	r.POST("/v1/internal/auth-profiles/import", h.Import)
 
-	reqBody := `{"provider":"openai","payload":{"access_token":"token","refresh_token":"refresh","email":"user@example.com","account_id":"acc-1"}}`
+	reqBody := `{"type":"openai","access_token":"token","refresh_token":"refresh","email":"user@example.com","account_id":"acc-1","enabled":true,"expired":"2027-01-01T00:00:00Z","last_refresh":"2027-01-01T00:00:00Z"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/internal/auth-profiles/import", strings.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
 

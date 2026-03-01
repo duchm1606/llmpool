@@ -3,25 +3,28 @@ package credential
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestCredentialPayload_UnmarshalJSON(t *testing.T) {
 	input := []byte(`{
-		"provider":"openai",
+		"type":"openai",
 		"access_token":"acc",
 		"refresh_token":"ref",
-		"expires_at":"2027-01-01T00:00:00Z",
+		"expired":"2027-01-01T00:00:00Z",
+		"id_token":"idtok",
+		"enabled":true,
 		"email":"user@example.com",
 		"account_id":"abc"
 	}`)
 
-	var payload CredentialPayload
+	var payload CredentialProfile
 	if err := json.Unmarshal(input, &payload); err != nil {
 		t.Fatalf("unmarshal payload: %v", err)
 	}
 
-	if payload.Provider != "openai" {
-		t.Fatalf("expected provider openai, got %q", payload.Provider)
+	if payload.Type != "openai" {
+		t.Fatalf("expected type openai, got %q", payload.Type)
 	}
 
 	if payload.AccessToken != "acc" {
@@ -30,6 +33,22 @@ func TestCredentialPayload_UnmarshalJSON(t *testing.T) {
 
 	if payload.RefreshToken != "ref" {
 		t.Fatalf("expected refresh token ref, got %q", payload.RefreshToken)
+	}
+
+	if payload.IDToken != "idtok" {
+		t.Fatalf("expected id token idtok, got %q", payload.IDToken)
+	}
+
+	expectedExpired, err := time.Parse(time.RFC3339, "2027-01-01T00:00:00Z")
+	if err != nil {
+		t.Fatalf("parse expected expiry: %v", err)
+	}
+	if !payload.Expired.Equal(expectedExpired) {
+		t.Fatalf("expected expired field set to parsed RFC3339 time")
+	}
+
+	if *payload.Enabled != true {
+		t.Fatalf("expected enabled true")
 	}
 
 	if payload.Email != "user@example.com" {

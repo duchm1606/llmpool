@@ -2,18 +2,22 @@ package credential
 
 import (
 	"encoding/json"
+	"time"
 )
 
-type CredentialPayload struct {
-	Provider     string `json:"provider"`
-	AccessToken  string `json:"access_token" binding:"required"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresAt    string `json:"expires_at"`
-	Email        string `json:"email"`
-	AccountID    string `json:"account_id"`
+type CredentialProfile struct {
+	AccessToken  string    `json:"access_token" binding:"required"`
+	RefreshToken string    `json:"refresh_token"`
+	IDToken      string    `json:"id_token"`
+	Email        string    `json:"email" binding:"required"`
+	AccountID    string    `json:"account_id" binding:"required"`
+	Expired      time.Time `json:"expired" binding:"required"`
+	Enabled      *bool     `json:"enabled"`
+	Type         string    `json:"type" binding:"required"`
+	LastRefresh  time.Time `json:"last_refresh" binding:"required"`
 }
 
-func (p CredentialPayload) ToRawMap() map[string]any {
+func (p CredentialProfile) ToRawMap() map[string]any {
 	b, err := json.Marshal(p)
 	if err != nil {
 		return map[string]any{}
