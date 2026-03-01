@@ -17,6 +17,8 @@ type Config struct {
 	Postgres     PostgresConfig     `mapstructure:"postgres"`
 	Redis        RedisConfig        `mapstructure:"redis"`
 	Orchestrator OrchestratorConfig `mapstructure:"orchestrator"`
+	Security     SecurityConfig     `mapstructure:"security"`
+	Credential   CredentialConfig   `mapstructure:"credential"`
 }
 
 type AppConfig struct {
@@ -51,6 +53,14 @@ type OrchestratorConfig struct {
 	LBStrategy string `mapstructure:"lb_strategy"`
 }
 
+type SecurityConfig struct {
+	EncryptionKey string `mapstructure:"encryption_key"`
+}
+
+type CredentialConfig struct {
+	RefreshInterval time.Duration `mapstructure:"refresh_interval"`
+}
+
 func Load() (*Config, error) {
 	_ = godotenv.Load()
 
@@ -72,6 +82,10 @@ func Load() (*Config, error) {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
+	if err := v.BindEnv("security.encryption_key"); err != nil {
+		return nil, fmt.Errorf("bind env security.encryption_key: %w", err)
+	}
+
 	var cfg Config
 	if err := v.Unmarshal(&cfg, func(c *mapstructure.DecoderConfig) {
 		c.DecodeHook = mapstructure.StringToTimeDurationHookFunc()
@@ -88,6 +102,14 @@ func Load() (*Config, error) {
 
 	if cfg.Orchestrator.LBStrategy != "round-robin" && cfg.Orchestrator.LBStrategy != "fill-first" {
 		return nil, fmt.Errorf("orchestrator.lb_strategy must be one of: round-robin, fill-first")
+	}
+
+	if cfg.Security.EncryptionKey == "" {
+		return nil, fmt.Errorf("security.encryption_key is required")
+	}
+
+	if cfg.Credential.RefreshInterval <= 0 {
+		return nil, fmt.Errorf("credential.refresh_interval must be > 0")
 	}
 
 	return &cfg, nil
@@ -113,4 +135,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("redis.db", 0)
 
 	v.SetDefault("orchestrator.lb_strategy", "round-robin")
+
+	v.SetDefault("credential.refresh_interval", "1m")
 }

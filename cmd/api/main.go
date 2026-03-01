@@ -11,8 +11,12 @@ import (
 
 	deliveryhttp "github.com/duchoang/llmpool/internal/delivery/http"
 	configinfra "github.com/duchoang/llmpool/internal/infra/config"
+	credentialrepo "github.com/duchoang/llmpool/internal/infra/credential"
 	loggerinfra "github.com/duchoang/llmpool/internal/infra/logger"
+	refreshinfra "github.com/duchoang/llmpool/internal/infra/refresh"
+	securityinfra "github.com/duchoang/llmpool/internal/infra/security"
 	"github.com/duchoang/llmpool/internal/platform/server"
+	usecasecredential "github.com/duchoang/llmpool/internal/usecase/credential"
 	usecasehealth "github.com/duchoang/llmpool/internal/usecase/health"
 	"go.uber.org/zap"
 )
@@ -31,10 +35,42 @@ func main() {
 		_ = logger.Sync()
 	}()
 
+	encryptionKey := os.Getenv("LLMPOOL_SECURITY_ENCRYPTION_KEY")
+	if encryptionKey == "" {
+		panic(fmt.Errorf("LLMPOOL_SECURITY_ENCRYPTION_KEY is required"))
+	}
+
+	encryptor, err := securityinfra.NewAesGCMEncryptor(encryptionKey)
+	if err != nil {
+		panic(fmt.Errorf("initialize encryptor: %w", err))
+	}
+
 	healthService := usecasehealth.NewService()
-	router := deliveryhttp.NewRouter(logger, healthService)
+	profileRepo := credentialrepo.NewMemoryRepository()
+	importService := usecasecredential.NewImportService(profileRepo, encryptor)
+
+	refreshers := map[string]usecasecredential.Refresher{
+		"openai":      refreshinfra.NewNoopRefresher(),
+		"anthropic":   refreshinfra.NewNoopRefresher(),
+		"gemini":      refreshinfra.NewNoopRefresher(),
+		"vertex":      refreshinfra.NewNoopRefresher(),
+		"qwen":        refreshinfra.NewNoopRefresher(),
+		"iflow":       refreshinfra.NewNoopRefresher(),
+		"antigravity": refreshinfra.NewNoopRefresher(),
+		"kiro":        refreshinfra.NewNoopRefresher(),
+		"copilot":     refreshinfra.NewNoopRefresher(),
+	}
+
+	refreshService := usecasecredential.NewRefreshService(profileRepo, refreshers)
+	router := deliveryhttp.NewRouter(logger, healthService, importService)
 
 	httpServer := server.NewHTTPServer(cfg.Server, router)
+	refreshWorker := server.NewRefreshWorker(refreshService, logger, cfg.Credential.RefreshInterval)
+
+	shutdownCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	go refreshWorker.Start(shutdownCtx)
 
 	go func() {
 		logger.Info("starting API server",
@@ -47,9 +83,6 @@ func main() {
 			logger.Fatal("server stopped unexpectedly", zap.Error(serveErr))
 		}
 	}()
-
-	shutdownCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	<-shutdownCtx.Done()
 	logger.Info("shutdown signal received")

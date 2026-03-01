@@ -1,7 +1,5 @@
-version: "2"
-
 linters:
-  default: none
+  disable-all: true
   enable:
     - errcheck
     - govet
@@ -15,6 +13,9 @@ linters:
     - unconvert
 
 linters-settings:
+  gosec:
+    excludes:
+      - G304
   revive:
     rules:
       - name: package-comments

@@ -23,3 +23,6 @@ redis:
 
 orchestrator:
   lb_strategy: round-robin
+
+credential:
+  refresh_interval: 1m

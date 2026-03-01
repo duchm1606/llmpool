@@ -2,12 +2,13 @@ package http
 
 import (
 	"github.com/duchoang/llmpool/internal/delivery/http/handler"
+	usecasecredential "github.com/duchoang/llmpool/internal/usecase/credential"
 	usecasehealth "github.com/duchoang/llmpool/internal/usecase/health"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
-func NewRouter(logger *zap.Logger, healthService usecasehealth.Service) *gin.Engine {
+func NewRouter(logger *zap.Logger, healthService usecasehealth.Service, importService usecasecredential.ImportService) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 
 	r := gin.New()
@@ -24,6 +25,9 @@ func NewRouter(logger *zap.Logger, healthService usecasehealth.Service) *gin.Eng
 
 	healthHandler := handler.NewHealthHandler(healthService)
 	r.GET("/health", healthHandler.Get)
+
+	credentialHandler := handler.NewCredentialHandler(importService)
+	r.POST("/v1/internal/auth-profiles/import", credentialHandler.Import)
 
 	return r
 }
