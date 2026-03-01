@@ -204,7 +204,26 @@ Initialization is complete only if all are true:
 
 ---
 
-## 12) Anti-patterns to Avoid
+## 12) Mandatory Verification Workflow
+
+After any code change, always run:
+
+```bash
+make test
+make lint
+```
+
+Linting uses `golangci-lint`. Install locally if missing:
+
+```bash
+go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+```
+
+If test or lint fails, fix the issue before marking work complete.
+
+---
+
+## 13) Anti-patterns to Avoid
 
 - Do not put business logic inside Gin handlers.
 - Do not read env variables directly from handlers/usecases.

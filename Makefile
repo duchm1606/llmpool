@@ -1,4 +1,5 @@
 APP_NAME=llmpool
+GOLANGCI_LINT=$(shell go env GOPATH)/bin/golangci-lint
 
 .PHONY: run build test lint up down
 
@@ -12,7 +13,7 @@ test:
 	go test ./...
 
 lint:
-	go vet ./...
+	$(GOLANGCI_LINT) run ./...
 
 up:
 	docker compose up --build
