@@ -1,0 +1,25 @@
+app:
+  name: llmpool
+  env: dev
+
+server:
+  host: 0.0.0.0
+  port: 8080
+  read_timeout: 10s
+  write_timeout: 10s
+  idle_timeout: 30s
+
+log:
+  level: info
+  development: true
+
+postgres:
+  dsn: postgres://postgres:postgres@postgres:5432/llmpool?sslmode=disable
+
+redis:
+  addr: redis:6379
+  password: ""
+  db: 0
+
+orchestrator:
+  lb_strategy: round-robin

@@ -1,0 +1,41 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: llmpool-app
+    ports:
+      - "8080:8080"
+    environment:
+      LLMPOOL_SERVER_HOST: 0.0.0.0
+      LLMPOOL_SERVER_PORT: 8080
+      LLMPOOL_POSTGRES_DSN: postgres://postgres:postgres@postgres:5432/llmpool?sslmode=disable
+      LLMPOOL_REDIS_ADDR: redis:6379
+      LLMPOOL_ORCHESTRATOR_LB_STRATEGY: round-robin
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: llmpool-postgres
+    environment:
+      POSTGRES_DB: llmpool
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: llmpool-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  pg_data:
+  redis_data:
