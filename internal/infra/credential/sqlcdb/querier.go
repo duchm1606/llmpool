@@ -12,6 +12,7 @@ type Querier interface {
 	CreateCredentialProfile(ctx context.Context, arg CreateCredentialProfileParams) (CredentialProfile, error)
 	ListCredentialProfiles(ctx context.Context) ([]CredentialProfile, error)
 	UpdateCredentialProfile(ctx context.Context, arg UpdateCredentialProfileParams) (CredentialProfile, error)
+	UpsertCredentialProfileByTypeAccount(ctx context.Context, arg UpsertCredentialProfileByTypeAccountParams) (CredentialProfile, error)
 }
 
 var _ Querier = (*Queries)(nil)
