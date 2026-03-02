@@ -1,0 +1,53 @@
+=== Drift Report: Base vs Worktree ===
+Base: /Users/duchoang/Projects/llmpool/internal
+Worktree: /Users/duchoang/Projects/llmpool-worktrees/codex-pkce-learning-sessions/internal
+
+Summary:
+- Added: 19 files
+- Removed: 1 files  
+- Modified: 18 files
+
+Added Files:
+- delivery/http/handler/oauth_integration_test.go
+- delivery/http/middleware/security_test.go
+- delivery/http/middleware/security.go
+- domain/oauth/entity_test.go
+- infra/credential/postgres_repository_test.go
+- infra/oauth/codex_refresher.go
+- infra/oauth/pkce_test.go
+- infra/oauth/redis_session_store_test.go
+- infra/oauth/replay_protection_test.go
+- infra/oauth/state_test.go
+- infra/oauth/state.go
+- usecase/credential/completion_service_test.go
+- usecase/credential/completion_service.go
+- usecase/credential/oauth_completion_service_test.go
+- usecase/credential/oauth_completion_service.go
+- usecase/credential/refresh_service_test.go
+- usecase/oauth/completion_service_test.go
+- usecase/oauth/completion_service.go
+- usecase/oauth/interface_test.go
+
+Removed Files:
+- usecase/oauth/session_store.go
+
+Modified Files:
+- delivery/http/handler/oauth_handler_test.go
+- delivery/http/handler/oauth_handler.go
+- delivery/http/router.go
+- domain/oauth/entity.go
+- infra/config/config_test.go
+- infra/config/config.go
+- infra/credential/postgres_repository.go
+- infra/credential/sqlcdb/credential_profiles.sql.go
+- infra/credential/sqlcdb/querier.go
+- infra/oauth/codex_provider_test.go
+- infra/oauth/codex_provider.go
+- infra/oauth/pkce.go
+- infra/oauth/redis_session_store.go
+- infra/refresh/noop_refresher.go
+- usecase/credential/import_service_test.go
+- usecase/credential/interface.go
+- usecase/credential/refresh_service.go
+- usecase/oauth/interface.go
+- 
