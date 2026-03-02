@@ -56,6 +56,7 @@ func TestLoad_RequiresEncryptionKeyFromEnv(t *testing.T) {
 	}
 
 	t.Setenv("LLMPOOL_SERVER_PORT", "19082")
+	t.Setenv("LLMPOOL_SECURITY_ENCRYPTION_KEY", "")
 
 	_, err = Load()
 	if err == nil {

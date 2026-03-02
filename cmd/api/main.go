@@ -13,6 +13,7 @@ import (
 	configinfra "github.com/duchoang/llmpool/internal/infra/config"
 	credentialrepo "github.com/duchoang/llmpool/internal/infra/credential"
 	loggerinfra "github.com/duchoang/llmpool/internal/infra/logger"
+	postgresinfra "github.com/duchoang/llmpool/internal/infra/postgres"
 	refreshinfra "github.com/duchoang/llmpool/internal/infra/refresh"
 	securityinfra "github.com/duchoang/llmpool/internal/infra/security"
 	"github.com/duchoang/llmpool/internal/platform/server"
@@ -46,7 +47,18 @@ func main() {
 	}
 
 	healthService := usecasehealth.NewService()
-	profileRepo := credentialrepo.NewMemoryRepository()
+	postgresConn, err := postgresinfra.Connect(context.Background(), cfg.Postgres.DSN)
+
+	if err != nil {
+		panic(fmt.Errorf("connect postgres: %w", err))
+	}
+	defer func() {
+		if closeErr := postgresConn.Close(context.Background()); closeErr != nil {
+			logger.Error("close postgres connection", zap.Error(closeErr))
+		}
+	}()
+
+	profileRepo := credentialrepo.NewCredentialRepository(postgresConn)
 	importService := usecasecredential.NewImportService(profileRepo, encryptor)
 
 	refreshers := map[string]usecasecredential.Refresher{

@@ -14,7 +14,7 @@ log:
   development: true
 
 postgres:
-  dsn: postgres://postgres:postgres@postgres:5432/llmpool?sslmode=disable
+  dsn: postgres://postgres:postgres@localhost:5432/llmpool?sslmode=disable
 
 redis:
   addr: redis:6379
