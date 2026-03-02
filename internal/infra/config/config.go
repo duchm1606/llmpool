@@ -67,6 +67,7 @@ type OAuthConfig struct {
 }
 
 type CodexOAuthConfig struct {
+	ClientID    string        `mapstructure:"client_id"`
 	AuthURL     string        `mapstructure:"auth_url"`
 	TokenURL    string        `mapstructure:"token_url"`
 	RedirectURI string        `mapstructure:"redirect_uri"`

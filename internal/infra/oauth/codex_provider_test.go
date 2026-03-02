@@ -7,11 +7,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/duchoang/llmpool/internal/infra/config"
 	"time"
 )
 
 func TestCodexProvider_BuildAuthURL(t *testing.T) {
-	provider := NewCodexProvider(OAuthCodexConfig{
+	provider := NewCodexProvider(config.CodexOAuthConfig{
 		AuthURL:     "https://auth.openai.com/authorize",
 		TokenURL:    "https://auth.openai.com/token",
 		RedirectURI: "http://localhost:8080/oauth/callback",
@@ -58,7 +60,7 @@ func TestCodexProvider_BuildAuthURL(t *testing.T) {
 }
 
 func TestCodexProvider_BuildAuthURL_MissingConfig(t *testing.T) {
-	provider := NewCodexProvider(OAuthCodexConfig{
+	provider := NewCodexProvider(config.CodexOAuthConfig{
 		// Empty config
 	})
 
@@ -108,7 +110,7 @@ func TestCodexProvider_ExchangeCode(t *testing.T) {
 	}))
 	defer mockServer.Close()
 
-	provider := NewCodexProvider(OAuthCodexConfig{
+	provider := NewCodexProvider(config.CodexOAuthConfig{
 		AuthURL:     mockServer.URL + "/authorize",
 		TokenURL:    mockServer.URL + "/token",
 		RedirectURI: "http://localhost:8080/oauth/callback",
@@ -143,7 +145,7 @@ func TestCodexProvider_ExchangeCode_ErrorResponse(t *testing.T) {
 	}))
 	defer mockServer.Close()
 
-	provider := NewCodexProvider(OAuthCodexConfig{
+	provider := NewCodexProvider(config.CodexOAuthConfig{
 		TokenURL: mockServer.URL + "/token",
 		ClientID: "test-client",
 		Timeout:  30 * time.Second,
@@ -157,7 +159,7 @@ func TestCodexProvider_ExchangeCode_ErrorResponse(t *testing.T) {
 }
 
 func TestCodexProvider_ExchangeCode_MissingConfig(t *testing.T) {
-	provider := NewCodexProvider(OAuthCodexConfig{
+	provider := NewCodexProvider(config.CodexOAuthConfig{
 		// Empty config - no token URL
 	})
 
@@ -169,7 +171,7 @@ func TestCodexProvider_ExchangeCode_MissingConfig(t *testing.T) {
 }
 
 func TestCodexProvider_RefreshToken_NotImplemented(t *testing.T) {
-	provider := NewCodexProvider(OAuthCodexConfig{})
+	provider := NewCodexProvider(config.CodexOAuthConfig{})
 
 	ctx := context.Background()
 	_, err := provider.RefreshToken(ctx, "refresh-token")
@@ -182,7 +184,7 @@ func TestCodexProvider_RefreshToken_NotImplemented(t *testing.T) {
 }
 
 func TestCodexProvider_DeviceFlow_NotImplemented(t *testing.T) {
-	provider := NewCodexProvider(OAuthCodexConfig{})
+	provider := NewCodexProvider(config.CodexOAuthConfig{})
 
 	ctx := context.Background()
 

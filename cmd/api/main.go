@@ -13,6 +13,7 @@ import (
 	configinfra "github.com/duchoang/llmpool/internal/infra/config"
 	credentialrepo "github.com/duchoang/llmpool/internal/infra/credential"
 	loggerinfra "github.com/duchoang/llmpool/internal/infra/logger"
+	oauthinfra "github.com/duchoang/llmpool/internal/infra/oauth"
 	postgresinfra "github.com/duchoang/llmpool/internal/infra/postgres"
 	refreshinfra "github.com/duchoang/llmpool/internal/infra/refresh"
 	redisinfra "github.com/duchoang/llmpool/internal/infra/redis"
@@ -87,7 +88,9 @@ func main() {
 	}
 
 	refreshService := usecasecredential.NewRefreshService(profileRepo, refreshers, encryptor)
-	router := deliveryhttp.NewRouter(logger, healthService, importService, refreshService)
+	oauthProvider := oauthinfra.NewCodexProvider(cfg.OAuth.Codex)
+	oauthSessionStore := oauthinfra.NewRedisSessionStore(redisClient, cfg.OAuth.Codex.SessionTTL)
+	router := deliveryhttp.NewRouter(logger, healthService, importService, refreshService, oauthProvider, oauthSessionStore, cfg.OAuth.Codex, cfg.OAuth.Codex.SessionTTL)
 
 	httpServer := server.NewHTTPServer(cfg.Server, router)
 	refreshWorker := server.NewRefreshWorker(refreshService, logger, cfg.Credential.RefreshInterval)

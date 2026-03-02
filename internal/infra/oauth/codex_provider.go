@@ -10,25 +10,20 @@ import (
 	"time"
 
 	domainoauth "github.com/duchoang/llmpool/internal/domain/oauth"
+	"github.com/duchoang/llmpool/internal/infra/config"
+	usecaseoauth "github.com/duchoang/llmpool/internal/usecase/oauth"
 )
+
+var _ usecaseoauth.OAuthProvider = (*CodexProvider)(nil)
 
 // CodexProvider implements OAuthProvider for OpenAI/Codex OAuth
 type CodexProvider struct {
-	config     OAuthCodexConfig
+	config     config.CodexOAuthConfig
 	httpClient *http.Client
 }
 
-// OAuthCodexConfig holds Codex OAuth configuration
-type OAuthCodexConfig struct {
-	AuthURL     string
-	TokenURL    string
-	RedirectURI string
-	ClientID    string
-	Timeout     time.Duration
-}
-
 // NewCodexProvider creates a new Codex OAuth provider
-func NewCodexProvider(cfg OAuthCodexConfig) *CodexProvider {
+func NewCodexProvider(cfg config.CodexOAuthConfig) *CodexProvider {
 	timeout := cfg.Timeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
