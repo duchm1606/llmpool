@@ -49,5 +49,13 @@ func NewRouter(
 	r.GET("/v1/internal/oauth/codex-auth-url", oauthHandler.GetAuthURL)
 	r.GET("/v0/management/codex-auth-url", oauthHandler.GetAuthURLCompatibility)
 
+	// OAuth callback and status endpoints
+	r.GET("/v1/internal/oauth/callback", oauthHandler.HandleCallback)
+	r.GET("/v1/internal/oauth/status", oauthHandler.GetStatus)
+
+	// Compatibility aliases for callback and status
+	r.GET("/v0/management/oauth-callback", oauthHandler.HandleCallback)
+	r.GET("/v0/management/get-auth-status", oauthHandler.GetStatus)
+
 	return r
 }

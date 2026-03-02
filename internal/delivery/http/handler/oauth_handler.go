@@ -142,3 +142,99 @@ func (h *OAuthHandler) GetAuthURLCompatibility(c *gin.Context) {
 		"state":  state,
 	})
 }
+
+
+
+// HandleCallback handles OAuth callback: GET /v1/internal/oauth/callback
+func (h *OAuthHandler) HandleCallback(c *gin.Context) {
+    ctx := c.Request.Context()
+    
+    // Get query params
+    code := c.Query("code")
+    state := c.Query("state")
+    errorParam := c.Query("error")
+    errorDescription := c.Query("error_description")
+    
+    // If error param present from OAuth provider
+    if errorParam != "" {
+        _ = h.sessionStore.MarkError(ctx, state, errorParam, errorDescription)
+        c.JSON(http.StatusBadRequest, gin.H{
+            "status": "error",
+            "error":  errorParam,
+        })
+        return
+    }
+    
+    // Validate state exists
+    session, err := h.sessionStore.GetStatus(ctx, state)
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{
+            "status": "error",
+            "error":  "invalid or expired state",
+        })
+        return
+    }
+    
+    // Exchange code for tokens
+    tokenPayload, err := h.provider.ExchangeCode(ctx, code, session.PKCEVerifier)
+    if err != nil {
+        _ = h.sessionStore.MarkError(ctx, state, "exchange_failed", err.Error())
+        c.JSON(http.StatusInternalServerError, gin.H{
+            "status": "error",
+            "error":  "failed to exchange code",
+        })
+        return
+    }
+    
+    // Mark as complete (use access token as account ID for now)
+    if err := h.sessionStore.MarkComplete(ctx, state, tokenPayload.AccessToken); err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{
+            "status": "error",
+            "error":  "failed to complete session",
+        })
+        return
+    }
+    
+    c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// GetStatus handles status polling: GET /v1/internal/oauth/status
+func (h *OAuthHandler) GetStatus(c *gin.Context) {
+    ctx := c.Request.Context()
+    state := c.Query("state")
+    
+    if state == "" {
+        c.JSON(http.StatusBadRequest, gin.H{
+            "status": "error",
+            "error":  "state parameter required",
+        })
+        return
+    }
+    
+    session, err := h.sessionStore.GetStatus(ctx, state)
+    if err != nil {
+        c.JSON(http.StatusNotFound, gin.H{
+            "status": "error",
+            "error":  "session not found",
+        })
+        return
+    }
+    
+    switch session.State {
+    case domainoauth.StatePending:
+        c.JSON(http.StatusOK, gin.H{"status": "wait"})
+    case domainoauth.StateOK:
+        c.JSON(http.StatusOK, gin.H{
+            "status":     "ok",
+            "account_id": session.AccountID,
+        })
+    case domainoauth.StateError:
+        c.JSON(http.StatusOK, gin.H{
+            "status":        "error",
+            "error_code":    session.ErrorCode,
+            "error_message": session.ErrorMessage,
+        })
+    default:
+        c.JSON(http.StatusOK, gin.H{"status": "wait"})
+    }
+}
