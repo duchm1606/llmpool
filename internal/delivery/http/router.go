@@ -55,7 +55,20 @@ func NewRouter(
 
 	// Compatibility aliases for callback and status
 	r.GET("/v0/management/oauth-callback", oauthHandler.HandleCallback)
+
 	r.GET("/v0/management/get-auth-status", oauthHandler.GetStatus)
+
+	// Device flow endpoints
+	r.POST("/v1/internal/oauth/codex-device-code", oauthHandler.StartDeviceFlow)
+	r.GET("/v1/internal/oauth/codex-device-status", oauthHandler.GetDeviceStatus)
+
+	// New device flow routes (RFC 8628)
+	r.POST("/v1/internal/oauth/device/start", oauthHandler.StartDeviceFlow)
+	r.GET("/v1/internal/oauth/device/poll", oauthHandler.GetDeviceStatus)
+
+	// Compatibility aliases for device flow
+	r.POST("/v0/management/codex-device-code", oauthHandler.StartDeviceFlow)
+	r.GET("/v0/management/codex-device-status", oauthHandler.GetDeviceStatus)
 
 	return r
 }

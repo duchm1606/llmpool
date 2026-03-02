@@ -238,3 +238,106 @@ func (h *OAuthHandler) GetStatus(c *gin.Context) {
         c.JSON(http.StatusOK, gin.H{"status": "wait"})
     }
 }
+
+// StartDeviceFlow handles device authorization flow initiation: POST /v1/internal/oauth/codex-device-code
+func (h *OAuthHandler) StartDeviceFlow(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	// Start device flow with provider
+	deviceResp, err := h.provider.StartDeviceFlow(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "failed to start device flow",
+		})
+		return
+	}
+
+	// Create pending session in Redis
+	session := domainoauth.OAuthSession{
+		SessionID:      deviceResp.DeviceCode,
+		State:          domainoauth.StatePending,
+		Provider:       "codex",
+		Expiry:         time.Now().Add(time.Duration(deviceResp.ExpiresIn) * time.Second),
+		CreatedAt:      time.Now(),
+		DeviceCode:     deviceResp.DeviceCode,
+		UserCode:       deviceResp.UserCode,
+		VerificationURI: deviceResp.VerificationURI,
+		Interval:       deviceResp.Interval,
+	}
+
+	if err := h.sessionStore.CreatePending(ctx, session); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "failed to create session",
+		})
+		return
+	}
+
+	// Return success response
+	c.JSON(http.StatusOK, gin.H{
+		"status":           "ok",
+		"device_code":      deviceResp.DeviceCode,
+		"user_code":        deviceResp.UserCode,
+		"verification_uri": deviceResp.VerificationURI,
+		"expires_in":       deviceResp.ExpiresIn,
+		"interval":         deviceResp.Interval,
+	})
+}
+
+// GetDeviceStatus handles device flow status polling: GET /v1/internal/oauth/codex-device-status
+func (h *OAuthHandler) GetDeviceStatus(c *gin.Context) {
+	ctx := c.Request.Context()
+	deviceCode := c.Query("device_code")
+
+	if deviceCode == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "device_code parameter required",
+		})
+		return
+	}
+
+	// Try to get tokens from device flow
+	tokenPayload, err := h.provider.PollDevice(ctx, deviceCode)
+	if err != nil {
+		// Check if it's a polling error (authorization_pending, slow_down, expired_token)
+		errMsg := err.Error()
+		if errMsg == "authorization pending" {
+			c.JSON(http.StatusOK, gin.H{"status": "wait"})
+			return
+		}
+		if errMsg == "slow down" {
+			c.JSON(http.StatusOK, gin.H{"status": "wait", "slow_down": true})
+			return
+		}
+		if errMsg == "expired token" {
+			c.JSON(http.StatusOK, gin.H{
+				"status":     "error",
+				"error_code": "expired_token",
+			})
+			return
+		}
+
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "failed to poll device",
+		})
+		return
+	}
+
+	// Mark session as complete
+	if err := h.sessionStore.MarkComplete(ctx, deviceCode, tokenPayload.AccessToken); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "failed to complete session",
+		})
+		return
+	}
+
+	// Return success response
+	c.JSON(http.StatusOK, gin.H{
+		"status":      "ok",
+		"account_id":  tokenPayload.AccessToken,
+	})
+}

@@ -170,33 +170,322 @@ func TestCodexProvider_ExchangeCode_MissingConfig(t *testing.T) {
 	}
 }
 
-func TestCodexProvider_RefreshToken_NotImplemented(t *testing.T) {
-	provider := NewCodexProvider(config.CodexOAuthConfig{})
+func TestCodexProvider_RefreshToken_MissingConfig(t *testing.T) {
+	provider := NewCodexProvider(config.CodexOAuthConfig{
+		// Empty config - no token URL
+	})
 
 	ctx := context.Background()
 	_, err := provider.RefreshToken(ctx, "refresh-token")
 	if err == nil {
-		t.Error("expected error for unimplemented method")
+		t.Error("expected error for missing token URL")
 	}
-	if !strings.Contains(err.Error(), "not implemented") {
+	if !strings.Contains(err.Error(), "token URL not configured") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
 
-func TestCodexProvider_DeviceFlow_NotImplemented(t *testing.T) {
-	provider := NewCodexProvider(config.CodexOAuthConfig{})
+func TestCodexProvider_RefreshToken_Success(t *testing.T) {
+	// Create mock token server
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+
+		// Verify form data
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+
+		if r.FormValue("grant_type") != "refresh_token" {
+			t.Errorf("grant_type: got %q, want %q", r.FormValue("grant_type"), "refresh_token")
+		}
+		if r.FormValue("refresh_token") != "test-refresh-token" {
+			t.Errorf("refresh_token: got %q, want %q", r.FormValue("refresh_token"), "test-refresh-token")
+		}
+		if r.FormValue("client_id") != "test-client" {
+			t.Errorf("client_id: got %q, want %q", r.FormValue("client_id"), "test-client")
+		}
+
+		// Return mock token response
+		resp := tokenResponse{
+			AccessToken:  "new-access-token",
+			RefreshToken: "new-refresh-token",
+			ExpiresIn:    3600,
+			TokenType:    "Bearer",
+			Scope:        "read write",
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockServer.Close()
+
+	provider := NewCodexProvider(config.CodexOAuthConfig{
+		TokenURL: mockServer.URL + "/token",
+		ClientID: "test-client",
+		Timeout:  30 * time.Second,
+	})
 
 	ctx := context.Background()
-
-	// Test StartDeviceFlow
-	_, err := provider.StartDeviceFlow(ctx)
-	if err == nil {
-		t.Error("expected error for unimplemented StartDeviceFlow")
+	payload, err := provider.RefreshToken(ctx, "test-refresh-token")
+	if err != nil {
+		t.Fatalf("RefreshToken error: %v", err)
 	}
 
-	// Test PollDevice
-	_, err = provider.PollDevice(ctx, "device-code")
+	if payload.AccessToken != "new-access-token" {
+		t.Errorf("access token: got %q, want %q", payload.AccessToken, "new-access-token")
+	}
+	if payload.RefreshToken != "new-refresh-token" {
+		t.Errorf("refresh token: got %q, want %q", payload.RefreshToken, "new-refresh-token")
+	}
+	if payload.TokenType != "Bearer" {
+		t.Errorf("token type: got %q, want %q", payload.TokenType, "Bearer")
+	}
+}
+
+func TestCodexProvider_StartDeviceFlow_MissingConfig(t *testing.T) {
+	provider := NewCodexProvider(config.CodexOAuthConfig{
+		// Empty config - no device URL
+	})
+
+	ctx := context.Background()
+	_, err := provider.StartDeviceFlow(ctx)
 	if err == nil {
-		t.Error("expected error for unimplemented PollDevice")
+		t.Error("expected error for missing device URL")
+	}
+	if !strings.Contains(err.Error(), "device URL not configured") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestCodexProvider_StartDeviceFlow_Success(t *testing.T) {
+	// Create mock device auth server
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+
+		// Verify form data
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+
+		if r.FormValue("client_id") != "test-client" {
+			t.Errorf("client_id: got %q, want %q", r.FormValue("client_id"), "test-client")
+		}
+
+		// Return mock device auth response
+		resp := deviceAuthResponse{
+			DeviceCode:      "test-device-code-123",
+			UserCode:        "ABCD-EFGH",
+			VerificationURI: "https://auth.openai.com/device",
+			ExpiresIn:       600,
+			Interval:        5,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockServer.Close()
+
+	provider := NewCodexProvider(config.CodexOAuthConfig{
+		DeviceURL: mockServer.URL + "/device",
+		ClientID:  "test-client",
+		Timeout:   30 * time.Second,
+	})
+
+	ctx := context.Background()
+	resp, err := provider.StartDeviceFlow(ctx)
+	if err != nil {
+		t.Fatalf("StartDeviceFlow error: %v", err)
+	}
+
+	if resp.DeviceCode != "test-device-code-123" {
+		t.Errorf("device_code: got %q, want %q", resp.DeviceCode, "test-device-code-123")
+	}
+	if resp.UserCode != "ABCD-EFGH" {
+		t.Errorf("user_code: got %q, want %q", resp.UserCode, "ABCD-EFGH")
+	}
+	if resp.VerificationURI != "https://auth.openai.com/device" {
+		t.Errorf("verification_uri: got %q, want %q", resp.VerificationURI, "https://auth.openai.com/device")
+	}
+	if resp.ExpiresIn != 600 {
+		t.Errorf("expires_in: got %d, want %d", resp.ExpiresIn, 600)
+	}
+	if resp.Interval != 5 {
+		t.Errorf("interval: got %d, want %d", resp.Interval, 5)
+	}
+}
+
+func TestCodexProvider_StartDeviceFlow_ErrorResponse(t *testing.T) {
+	// Create mock server that returns error
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer mockServer.Close()
+
+	provider := NewCodexProvider(config.CodexOAuthConfig{
+		DeviceURL: mockServer.URL + "/device",
+		ClientID:  "test-client",
+		Timeout:   30 * time.Second,
+	})
+
+	ctx := context.Background()
+	_, err := provider.StartDeviceFlow(ctx)
+	if err == nil {
+		t.Error("expected error for bad status code")
+	}
+}
+
+func TestCodexProvider_PollDevice_MissingConfig(t *testing.T) {
+	provider := NewCodexProvider(config.CodexOAuthConfig{
+		// Empty config - no token URL
+	})
+
+	ctx := context.Background()
+	_, err := provider.PollDevice(ctx, "device-code")
+	if err == nil {
+		t.Error("expected error for missing token URL")
+	}
+	if !strings.Contains(err.Error(), "token URL not configured") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestCodexProvider_PollDevice_Success(t *testing.T) {
+	// Create mock token server
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+
+		// Verify form data
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+
+		if r.FormValue("grant_type") != "urn:ietf:params:oauth:grant-type:device_code" {
+			t.Errorf("grant_type: got %q, want %q", r.FormValue("grant_type"), "urn:ietf:params:oauth:grant-type:device_code")
+		}
+		if r.FormValue("device_code") != "test-device-code" {
+			t.Errorf("device_code: got %q, want %q", r.FormValue("device_code"), "test-device-code")
+		}
+		if r.FormValue("client_id") != "test-client" {
+			t.Errorf("client_id: got %q, want %q", r.FormValue("client_id"), "test-client")
+		}
+
+		// Return mock token response
+		resp := tokenResponse{
+			AccessToken:  "device-access-token",
+			RefreshToken: "device-refresh-token",
+			ExpiresIn:    3600,
+			TokenType:    "Bearer",
+			Scope:        "read write",
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockServer.Close()
+
+	provider := NewCodexProvider(config.CodexOAuthConfig{
+		TokenURL: mockServer.URL + "/token",
+		ClientID: "test-client",
+		Timeout:  30 * time.Second,
+	})
+
+	ctx := context.Background()
+	payload, err := provider.PollDevice(ctx, "test-device-code")
+	if err != nil {
+		t.Fatalf("PollDevice error: %v", err)
+	}
+
+	if payload.AccessToken != "device-access-token" {
+		t.Errorf("access token: got %q, want %q", payload.AccessToken, "device-access-token")
+	}
+	if payload.RefreshToken != "device-refresh-token" {
+		t.Errorf("refresh token: got %q, want %q", payload.RefreshToken, "device-refresh-token")
+	}
+	if payload.TokenType != "Bearer" {
+		t.Errorf("token type: got %q, want %q", payload.TokenType, "Bearer")
+	}
+}
+
+func TestCodexProvider_PollDevice_AuthorizationPending(t *testing.T) {
+	// Create mock token server that returns authorization_pending
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "authorization_pending",
+		})
+	}))
+	defer mockServer.Close()
+
+	provider := NewCodexProvider(config.CodexOAuthConfig{
+		TokenURL: mockServer.URL + "/token",
+		ClientID: "test-client",
+		Timeout:  30 * time.Second,
+	})
+
+	ctx := context.Background()
+	_, err := provider.PollDevice(ctx, "test-device-code")
+	if err == nil {
+		t.Fatal("expected error for authorization_pending")
+	}
+	if !strings.Contains(err.Error(), "authorization pending") {
+		t.Errorf("expected 'authorization pending' error, got: %v", err)
+	}
+}
+
+func TestCodexProvider_PollDevice_SlowDown(t *testing.T) {
+	// Create mock token server that returns slow_down
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "slow_down",
+		})
+	}))
+	defer mockServer.Close()
+
+	provider := NewCodexProvider(config.CodexOAuthConfig{
+		TokenURL: mockServer.URL + "/token",
+		ClientID: "test-client",
+		Timeout:  30 * time.Second,
+	})
+
+	ctx := context.Background()
+	_, err := provider.PollDevice(ctx, "test-device-code")
+	if err == nil {
+		t.Fatal("expected error for slow_down")
+	}
+	if !strings.Contains(err.Error(), "slow down") {
+		t.Errorf("expected 'slow down' error, got: %v", err)
+	}
+}
+
+func TestCodexProvider_PollDevice_ExpiredToken(t *testing.T) {
+	// Create mock token server that returns expired_token
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "expired_token",
+		})
+	}))
+	defer mockServer.Close()
+
+	provider := NewCodexProvider(config.CodexOAuthConfig{
+		TokenURL: mockServer.URL + "/token",
+		ClientID: "test-client",
+		Timeout:  30 * time.Second,
+	})
+
+	ctx := context.Background()
+	_, err := provider.PollDevice(ctx, "test-device-code")
+	if err == nil {
+		t.Fatal("expected error for expired_token")
+	}
+	if !strings.Contains(err.Error(), "expired token") {
+		t.Errorf("expected 'expired token' error, got: %v", err)
 	}
 }

@@ -70,10 +70,12 @@ func main() {
 		}
 	}()
 	logger.Info("redis connected", zap.String("addr", cfg.Redis.Addr))
-	_ = redisClient
 
 	profileRepo := credentialrepo.NewCredentialRepository(postgresConn)
 	importService := usecasecredential.NewImportService(profileRepo, encryptor)
+
+	oauthProvider := oauthinfra.NewCodexProvider(cfg.OAuth.Codex)
+	oauthSessionStore := oauthinfra.NewRedisSessionStore(redisClient, cfg.OAuth.Codex.SessionTTL)
 
 	refreshers := map[string]usecasecredential.Refresher{
 		"openai":      refreshinfra.NewNoopRefresher(),
@@ -85,11 +87,10 @@ func main() {
 		"antigravity": refreshinfra.NewNoopRefresher(),
 		"kiro":        refreshinfra.NewNoopRefresher(),
 		"copilot":     refreshinfra.NewNoopRefresher(),
+		"codex":       oauthinfra.NewCodexRefresher(oauthProvider),
 	}
 
 	refreshService := usecasecredential.NewRefreshService(profileRepo, refreshers, encryptor)
-	oauthProvider := oauthinfra.NewCodexProvider(cfg.OAuth.Codex)
-	oauthSessionStore := oauthinfra.NewRedisSessionStore(redisClient, cfg.OAuth.Codex.SessionTTL)
 	router := deliveryhttp.NewRouter(logger, healthService, importService, refreshService, oauthProvider, oauthSessionStore, cfg.OAuth.Codex, cfg.OAuth.Codex.SessionTTL)
 
 	httpServer := server.NewHTTPServer(cfg.Server, router)
