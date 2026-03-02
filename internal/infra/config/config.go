@@ -19,6 +19,7 @@ type Config struct {
 	Orchestrator OrchestratorConfig `mapstructure:"orchestrator"`
 	Security     SecurityConfig     `mapstructure:"security"`
 	Credential   CredentialConfig   `mapstructure:"credential"`
+	OAuth        OAuthConfig        `mapstructure:"oauth"`
 }
 
 type AppConfig struct {
@@ -61,6 +62,20 @@ type CredentialConfig struct {
 	RefreshInterval time.Duration `mapstructure:"refresh_interval"`
 }
 
+type OAuthConfig struct {
+	Codex CodexOAuthConfig `mapstructure:"codex"`
+}
+
+type CodexOAuthConfig struct {
+	AuthURL     string        `mapstructure:"auth_url"`
+	TokenURL    string        `mapstructure:"token_url"`
+	RedirectURI string        `mapstructure:"redirect_uri"`
+	DeviceURL   string        `mapstructure:"device_url"`
+	PollURL     string        `mapstructure:"poll_url"`
+	Timeout     time.Duration `mapstructure:"timeout"`
+	SessionTTL  time.Duration `mapstructure:"session_ttl"`
+}
+
 func Load() (*Config, error) {
 	_ = godotenv.Load()
 
@@ -84,6 +99,28 @@ func Load() (*Config, error) {
 
 	if err := v.BindEnv("security.encryption_key"); err != nil {
 		return nil, fmt.Errorf("bind env security.encryption_key: %w", err)
+	}
+
+	if err := v.BindEnv("oauth.codex.auth_url"); err != nil {
+		return nil, fmt.Errorf("bind env oauth.codex.auth_url: %w", err)
+	}
+	if err := v.BindEnv("oauth.codex.token_url"); err != nil {
+		return nil, fmt.Errorf("bind env oauth.codex.token_url: %w", err)
+	}
+	if err := v.BindEnv("oauth.codex.redirect_uri"); err != nil {
+		return nil, fmt.Errorf("bind env oauth.codex.redirect_uri: %w", err)
+	}
+	if err := v.BindEnv("oauth.codex.device_url"); err != nil {
+		return nil, fmt.Errorf("bind env oauth.codex.device_url: %w", err)
+	}
+	if err := v.BindEnv("oauth.codex.poll_url"); err != nil {
+		return nil, fmt.Errorf("bind env oauth.codex.poll_url: %w", err)
+	}
+	if err := v.BindEnv("oauth.codex.timeout"); err != nil {
+		return nil, fmt.Errorf("bind env oauth.codex.timeout: %w", err)
+	}
+	if err := v.BindEnv("oauth.codex.session_ttl"); err != nil {
+		return nil, fmt.Errorf("bind env oauth.codex.session_ttl: %w", err)
 	}
 
 	var cfg Config
@@ -112,6 +149,28 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("credential.refresh_interval must be > 0")
 	}
 
+	if cfg.OAuth.Codex.AuthURL == "" {
+		return nil, fmt.Errorf("oauth.codex.auth_url is required")
+	}
+	if cfg.OAuth.Codex.TokenURL == "" {
+		return nil, fmt.Errorf("oauth.codex.token_url is required")
+	}
+	if cfg.OAuth.Codex.RedirectURI == "" {
+		return nil, fmt.Errorf("oauth.codex.redirect_uri is required")
+	}
+	if cfg.OAuth.Codex.DeviceURL == "" {
+		return nil, fmt.Errorf("oauth.codex.device_url is required")
+	}
+	if cfg.OAuth.Codex.PollURL == "" {
+		return nil, fmt.Errorf("oauth.codex.poll_url is required")
+	}
+	if cfg.OAuth.Codex.Timeout <= 0 {
+		return nil, fmt.Errorf("oauth.codex.timeout must be > 0")
+	}
+	if cfg.OAuth.Codex.SessionTTL <= 0 {
+		return nil, fmt.Errorf("oauth.codex.session_ttl must be > 0")
+	}
+
 	return &cfg, nil
 }
 
@@ -136,5 +195,11 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("orchestrator.lb_strategy", "round-robin")
 
-	v.SetDefault("credential.refresh_interval", "1m")
+	v.SetDefault("oauth.codex.auth_url", "https://auth.openai.com/authorize")
+	v.SetDefault("oauth.codex.token_url", "https://auth.openai.com/token")
+	v.SetDefault("oauth.codex.redirect_uri", "http://localhost:8080/oauth/callback")
+	v.SetDefault("oauth.codex.device_url", "https://auth.openai.com/device/code")
+	v.SetDefault("oauth.codex.poll_url", "https://auth.openai.com/device/poll")
+	v.SetDefault("oauth.codex.timeout", "30s")
+	v.SetDefault("oauth.codex.session_ttl", "600s")
 }

@@ -15,6 +15,7 @@ import (
 	loggerinfra "github.com/duchoang/llmpool/internal/infra/logger"
 	postgresinfra "github.com/duchoang/llmpool/internal/infra/postgres"
 	refreshinfra "github.com/duchoang/llmpool/internal/infra/refresh"
+	redisinfra "github.com/duchoang/llmpool/internal/infra/redis"
 	securityinfra "github.com/duchoang/llmpool/internal/infra/security"
 	"github.com/duchoang/llmpool/internal/platform/server"
 	usecasecredential "github.com/duchoang/llmpool/internal/usecase/credential"
@@ -57,6 +58,18 @@ func main() {
 			logger.Error("close postgres connection", zap.Error(closeErr))
 		}
 	}()
+
+	redisClient, err := redisinfra.Connect(context.Background(), cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB)
+	if err != nil {
+		panic(fmt.Errorf("connect redis: %w", err))
+	}
+	defer func() {
+		if closeErr := redisClient.Close(); closeErr != nil {
+			logger.Error("close redis connection", zap.Error(closeErr))
+		}
+	}()
+	logger.Info("redis connected", zap.String("addr", cfg.Redis.Addr))
+	_ = redisClient
 
 	profileRepo := credentialrepo.NewCredentialRepository(postgresConn)
 	importService := usecasecredential.NewImportService(profileRepo, encryptor)
