@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/duchoang/llmpool/internal/delivery/http/handler"
+	"github.com/duchoang/llmpool/internal/delivery/http/middleware"
 	configinfra "github.com/duchoang/llmpool/internal/infra/config"
 	usecasecredential "github.com/duchoang/llmpool/internal/usecase/credential"
 	usecasehealth "github.com/duchoang/llmpool/internal/usecase/health"
@@ -27,14 +28,8 @@ func NewRouter(
 	r := gin.New()
 	r.Use(gin.Recovery())
 
-	r.Use(func(c *gin.Context) {
-		c.Next()
-		logger.Info("request",
-			zap.String("method", c.Request.Method),
-			zap.String("path", c.Request.URL.Path),
-			zap.Int("status", c.Writer.Status()),
-		)
-	})
+	// Security-aware logging middleware with sensitive data redaction
+	r.Use(middleware.SecurityLogger(logger))
 
 	healthHandler := handler.NewHealthHandler(healthService)
 	r.GET("/health", healthHandler.Get)
