@@ -29,7 +29,7 @@ credential:
 
 oauth:
   codex:
-    client_id: app_EMoamEEZ73f0CkXaXp7hrann
+    client_id: ""
     auth_url: https://auth.openai.com/oauth/authorize
     token_url: https://auth.openai.com/oauth/token
     redirect_uri: http://localhost:1455/auth/callback

@@ -13,7 +13,9 @@ import (
 	configinfra "github.com/duchoang/llmpool/internal/infra/config"
 	credentialrepo "github.com/duchoang/llmpool/internal/infra/credential"
 	loggerinfra "github.com/duchoang/llmpool/internal/infra/logger"
+	oauthinfra "github.com/duchoang/llmpool/internal/infra/oauth"
 	postgresinfra "github.com/duchoang/llmpool/internal/infra/postgres"
+	redisinfra "github.com/duchoang/llmpool/internal/infra/redis"
 	refreshinfra "github.com/duchoang/llmpool/internal/infra/refresh"
 	securityinfra "github.com/duchoang/llmpool/internal/infra/security"
 	"github.com/duchoang/llmpool/internal/platform/server"
@@ -59,8 +61,23 @@ func main() {
 		}
 	}()
 
+	redisClient, err := redisinfra.Connect(context.Background(), cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB)
+	if err != nil {
+		panic(fmt.Errorf("connect redis: %w", err))
+	}
+	defer func() {
+		if closeErr := redisClient.Close(); closeErr != nil {
+			logger.Error("close redis connection", zap.Error(closeErr))
+		}
+	}()
+	logger.Info("redis connected", zap.String("addr", cfg.Redis.Addr))
+
 	profileRepo := credentialrepo.NewCredentialRepository(postgresConn)
 	importService := usecasecredential.NewImportService(profileRepo, encryptor)
+	oauthCompletionService := usecasecredential.NewCompletionService(profileRepo, encryptor)
+
+	oauthProvider := oauthinfra.NewCodexProvider(cfg.OAuth.Codex)
+	oauthSessionStore := oauthinfra.NewRedisSessionStore(redisClient, cfg.OAuth.Codex.SessionTTL)
 
 	refreshers := map[string]usecasecredential.Refresher{
 		"openai":      refreshinfra.NewNoopRefresher(),
@@ -72,11 +89,12 @@ func main() {
 		"antigravity": refreshinfra.NewNoopRefresher(),
 		"kiro":        refreshinfra.NewNoopRefresher(),
 		"copilot":     refreshinfra.NewNoopRefresher(),
+		"codex":       oauthinfra.NewCodexRefresher(oauthProvider),
 	}
 
 	refreshService := usecasecredential.NewRefreshService(profileRepo, refreshers, encryptor)
 
-	router := deliveryhttp.NewRouter(logger, healthService, importService, refreshService)
+	router := deliveryhttp.NewRouter(logger, healthService, importService, refreshService, oauthProvider, oauthSessionStore, cfg.OAuth.Codex, cfg.OAuth.Codex.SessionTTL, oauthCompletionService)
 
 	httpServer := server.NewHTTPServer(cfg.Server, router)
 	refreshWorker := server.NewRefreshWorker(refreshService, logger, cfg.Credential.RefreshInterval)

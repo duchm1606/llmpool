@@ -23,6 +23,10 @@ func (r *testRepo) List(_ context.Context) ([]domaincredential.Profile, error) {
 func (r *testRepo) Update(_ context.Context, p domaincredential.Profile) (domaincredential.Profile, error) {
 	return p, nil
 }
+func (r *testRepo) UpsertByTypeAccount(_ context.Context, p domaincredential.Profile) (domaincredential.Profile, error) {
+	r.saved = append(r.saved, p)
+	return p, nil
+}
 
 func TestImport_SavesOnlyEncryptedProfileBlob(t *testing.T) {
 	repo := &testRepo{}

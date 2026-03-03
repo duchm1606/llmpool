@@ -128,6 +128,31 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("credential.refresh_interval must be > 0")
 	}
 
+	if cfg.OAuth.Codex.ClientID == "" {
+		return nil, fmt.Errorf("oauth.codex.client_id is required")
+	}
+	if cfg.OAuth.Codex.AuthURL == "" {
+		return nil, fmt.Errorf("oauth.codex.auth_url is required")
+	}
+	if cfg.OAuth.Codex.TokenURL == "" {
+		return nil, fmt.Errorf("oauth.codex.token_url is required")
+	}
+	if cfg.OAuth.Codex.RedirectURI == "" {
+		return nil, fmt.Errorf("oauth.codex.redirect_uri is required")
+	}
+	if cfg.OAuth.Codex.DeviceURL == "" {
+		return nil, fmt.Errorf("oauth.codex.device_url is required")
+	}
+	if cfg.OAuth.Codex.PollURL == "" {
+		return nil, fmt.Errorf("oauth.codex.poll_url is required")
+	}
+	if cfg.OAuth.Codex.Timeout <= 0 {
+		return nil, fmt.Errorf("oauth.codex.timeout must be > 0")
+	}
+	if cfg.OAuth.Codex.SessionTTL <= 0 {
+		return nil, fmt.Errorf("oauth.codex.session_ttl must be > 0")
+	}
+
 	return &cfg, nil
 }
 
