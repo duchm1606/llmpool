@@ -19,6 +19,7 @@ type Config struct {
 	Orchestrator OrchestratorConfig `mapstructure:"orchestrator"`
 	Security     SecurityConfig     `mapstructure:"security"`
 	Credential   CredentialConfig   `mapstructure:"credential"`
+	OAuth        OAuthConfig        `mapstructure:"oauth"`
 }
 
 type AppConfig struct {
@@ -59,6 +60,21 @@ type SecurityConfig struct {
 
 type CredentialConfig struct {
 	RefreshInterval time.Duration `mapstructure:"refresh_interval"`
+}
+
+type OAuthConfig struct {
+	Codex CodexOAuthConfig `mapstructure:"codex"`
+}
+
+type CodexOAuthConfig struct {
+	ClientID    string        `mapstructure:"client_id"`
+	AuthURL     string        `mapstructure:"auth_url"`
+	TokenURL    string        `mapstructure:"token_url"`
+	RedirectURI string        `mapstructure:"redirect_uri"`
+	DeviceURL   string        `mapstructure:"device_url"`
+	PollURL     string        `mapstructure:"poll_url"`
+	Timeout     time.Duration `mapstructure:"timeout"`
+	SessionTTL  time.Duration `mapstructure:"session_ttl"`
 }
 
 func Load() (*Config, error) {
