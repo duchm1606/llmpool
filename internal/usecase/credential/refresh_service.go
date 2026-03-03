@@ -45,14 +45,7 @@ func (s *refreshService) RefreshDue(ctx context.Context) error {
 			return fmt.Errorf("decrypt existing profile %s: %w", profile.ID, err)
 		}
 
-		// Get the current refresh token for the refresh operation
-		currentRefreshToken := oldPayload.RefreshToken
-		if currentRefreshToken == "" {
-			// No refresh token available, skip this profile
-			continue
-		}
-
-		result, refreshErr := refresher.Refresh(ctx, currentRefreshToken)
+		newEncryptedSecret, expiredAt, refreshErr := refresher.Refresh(ctx, profile)
 		now := s.now().UTC()
 
 		if refreshErr != nil {
@@ -63,13 +56,14 @@ func (s *refreshService) RefreshDue(ctx context.Context) error {
 			continue
 		}
 
-		// Safe update: Only update access token and expiry
-		// Only update refresh token if provider returned a new one (rotation)
-		oldPayload.AccessToken = result.AccessToken
-		if result.RefreshToken != "" {
-			oldPayload.RefreshToken = result.RefreshToken
+		oldPayload.AccessToken = newEncryptedSecret
+		if oldPayload.RefreshToken != "" {
+			oldPayload.RefreshToken = newEncryptedSecret
 		}
-		oldPayload.Expired = result.ExpiresAt.UTC()
+		if oldPayload.IDToken != "" {
+			oldPayload.IDToken = newEncryptedSecret
+		}
+		oldPayload.Expired = expiredAt.UTC()
 		oldPayload.Enabled = &[]bool{true}[0]
 		oldPayload.LastRefresh = now
 
@@ -84,7 +78,7 @@ func (s *refreshService) RefreshDue(ctx context.Context) error {
 		}
 
 		profile.EncryptedProfile = encProfile
-		profile.Expired = result.ExpiresAt
+		profile.Expired = expiredAt
 		profile.Enabled = true
 		profile.LastRefreshAt = now
 

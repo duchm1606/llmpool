@@ -17,7 +17,7 @@ postgres:
   dsn: postgres://postgres:postgres@localhost:5432/llmpool?sslmode=disable
 
 redis:
-  addr: redis:6379
+  addr: localhost:6379
   password: ""
   db: 0
 

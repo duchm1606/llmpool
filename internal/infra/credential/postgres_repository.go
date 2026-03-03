@@ -69,23 +69,6 @@ func (r *PostgresRepository) Update(ctx context.Context, profile domaincredentia
 	return toDomainProfile(row), nil
 }
 
-func (r *PostgresRepository) UpsertByTypeAccount(ctx context.Context, profile domaincredential.Profile) (domaincredential.Profile, error) {
-	row, err := r.queries.UpsertCredentialProfileByTypeAccount(ctx, sqlcdb.UpsertCredentialProfileByTypeAccountParams{
-		Type:             profile.Type,
-		AccountID:        profile.AccountID,
-		Enabled:          profile.Enabled,
-		Email:            profile.Email,
-		Expired:          toTimestamptz(profile.Expired),
-		LastRefreshAt:    toTimestamptz(profile.LastRefreshAt),
-		EncryptedProfile: profile.EncryptedProfile,
-	})
-	if err != nil {
-		return domaincredential.Profile{}, fmt.Errorf("upsert credential profile: %w", err)
-	}
-
-	return toDomainProfile(row), nil
-}
-
 func toDomainProfile(row sqlcdb.CredentialProfile) domaincredential.Profile {
 	return domaincredential.Profile{
 		ID:               row.ID,
