@@ -8,14 +8,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/duchoang/llmpool/internal/delivery/http/middleware"
 	domaincredential "github.com/duchoang/llmpool/internal/domain/credential"
 	domainoauth "github.com/duchoang/llmpool/internal/domain/oauth"
 	"github.com/duchoang/llmpool/internal/infra/config"
+	loggerinfra "github.com/duchoang/llmpool/internal/infra/logger"
 	"github.com/duchoang/llmpool/internal/infra/oauth"
 	usecasecredential "github.com/duchoang/llmpool/internal/usecase/credential"
 	usecaseoauth "github.com/duchoang/llmpool/internal/usecase/oauth"
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
+
+var oauthLog = loggerinfra.ForModuleLazy("delivery.http.handler.oauth")
 
 // OAuthHandler handles OAuth flow endpoints
 type OAuthHandler struct {
@@ -74,6 +79,7 @@ func (h *OAuthHandler) GetAuthURLCompatibility(c *gin.Context) {
 // HandleCallback handles OAuth callback: GET /v1/internal/oauth/callback
 func (h *OAuthHandler) HandleCallback(c *gin.Context) {
 	ctx := c.Request.Context()
+	requestID := middleware.GetRequestID(c)
 
 	// Get query params
 	code := c.Query("code")
@@ -86,6 +92,11 @@ func (h *OAuthHandler) HandleCallback(c *gin.Context) {
 
 	// If error param present from OAuth provider
 	if errorParam != "" {
+		oauthLog.Warn("oauth callback returned provider error",
+			zap.String("request_id", requestID),
+			zap.String("state", state),
+			zap.String("error", errorParam),
+		)
 		_ = h.sessionStore.MarkError(ctx, state, errorParam, errorDescription)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
@@ -97,6 +108,11 @@ func (h *OAuthHandler) HandleCallback(c *gin.Context) {
 	// Validate state exists
 	session, err := h.sessionStore.GetStatus(ctx, state)
 	if err != nil {
+		oauthLog.Warn("oauth callback session not found",
+			zap.String("request_id", requestID),
+			zap.String("state", state),
+			zap.Error(err),
+		)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "invalid or expired state",
@@ -108,6 +124,11 @@ func (h *OAuthHandler) HandleCallback(c *gin.Context) {
 	tokenPayload, err := h.provider.ExchangeCode(ctx, code, session.PKCEVerifier)
 
 	if err != nil {
+		oauthLog.Error("oauth code exchange failed",
+			zap.String("request_id", requestID),
+			zap.String("state", state),
+			zap.Error(err),
+		)
 		_ = h.sessionStore.MarkError(ctx, state, "exchange_failed", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
@@ -118,11 +139,26 @@ func (h *OAuthHandler) HandleCallback(c *gin.Context) {
 
 	accountID := strings.TrimSpace(tokenPayload.AccountID)
 	if accountID == "" {
-		accountID = tokenPayload.AccessToken
+		oauthLog.Error("oauth callback missing account identity",
+			zap.String("request_id", requestID),
+			zap.String("state", state),
+		)
+		_ = h.sessionStore.MarkError(ctx, state, "missing_account_id", "missing account identifier in token payload")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "missing account identifier",
+		})
+		return
 	}
 
 	newProfile, err := h.completionService.CompleteOAuth(ctx, accountID, tokenPayload)
 	if err != nil {
+		oauthLog.Error("oauth completion failed",
+			zap.String("request_id", requestID),
+			zap.String("state", state),
+			zap.String("account_id", accountID),
+			zap.Error(err),
+		)
 		_ = h.sessionStore.MarkError(ctx, state, "completion_failed", err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
@@ -132,12 +168,24 @@ func (h *OAuthHandler) HandleCallback(c *gin.Context) {
 	}
 
 	if err := h.sessionStore.MarkComplete(ctx, state, newProfile.AccountID); err != nil {
+		oauthLog.Error("oauth session mark complete failed",
+			zap.String("request_id", requestID),
+			zap.String("state", state),
+			zap.String("account_id", newProfile.AccountID),
+			zap.Error(err),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "failed to complete session",
 		})
 		return
 	}
+
+	oauthLog.Info("oauth callback completed",
+		zap.String("request_id", requestID),
+		zap.String("state", state),
+		zap.String("account_id", newProfile.AccountID),
+	)
 
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
@@ -401,7 +449,16 @@ func (h *OAuthHandler) GetDeviceStatus(c *gin.Context) {
 	}
 
 	// Mark session as complete
-	if err := h.sessionStore.MarkComplete(ctx, deviceCode, tokenPayload.AccessToken); err != nil {
+	accountID := strings.TrimSpace(tokenPayload.AccountID)
+	if accountID == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "missing account identifier",
+		})
+		return
+	}
+
+	if err := h.sessionStore.MarkComplete(ctx, deviceCode, accountID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "failed to complete session",
@@ -412,6 +469,6 @@ func (h *OAuthHandler) GetDeviceStatus(c *gin.Context) {
 	// Return success response
 	c.JSON(http.StatusOK, gin.H{
 		"status":     "ok",
-		"account_id": tokenPayload.AccessToken,
+		"account_id": accountID,
 	})
 }

@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -69,9 +70,64 @@ func (p *CodexProvider) BuildAuthURL(ctx context.Context, state, verifier string
 type tokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
+	IDToken      string `json:"id_token"`
 	ExpiresIn    int    `json:"expires_in"`
 	TokenType    string `json:"token_type"`
 	Scope        string `json:"scope"`
+}
+
+type tokenClaims struct {
+	Email string `json:"email"`
+	Sub   string `json:"sub"`
+	Auth  struct {
+		ChatGPTAccountID string `json:"chatgpt_account_id"`
+	} `json:"https://api.openai.com/auth"`
+}
+
+func extractAccountIdentity(idToken string) (string, string, error) {
+	idToken = strings.TrimSpace(idToken)
+	if idToken == "" {
+		return "", "", fmt.Errorf("id_token is empty")
+	}
+
+	parts := strings.Split(idToken, ".")
+	if len(parts) != 3 {
+		return "", "", fmt.Errorf("invalid id_token format")
+	}
+
+	payloadBytes, err := base64URLDecode(parts[1])
+	if err != nil {
+		return "", "", fmt.Errorf("decode id_token payload: %w", err)
+	}
+
+	var claims tokenClaims
+	if err := json.Unmarshal(payloadBytes, &claims); err != nil {
+		return "", "", fmt.Errorf("parse id_token payload: %w", err)
+	}
+
+	accountID := strings.TrimSpace(claims.Auth.ChatGPTAccountID)
+	if accountID == "" {
+		accountID = strings.TrimSpace(claims.Sub)
+	}
+	if accountID == "" {
+		accountID = strings.TrimSpace(claims.Email)
+	}
+	if accountID == "" {
+		return "", "", fmt.Errorf("id_token missing account identifier")
+	}
+
+	return accountID, strings.TrimSpace(claims.Email), nil
+}
+
+func base64URLDecode(data string) ([]byte, error) {
+	switch len(data) % 4 {
+	case 2:
+		data += "=="
+	case 3:
+		data += "="
+	}
+
+	return base64.URLEncoding.DecodeString(data)
 }
 
 // ExchangeCode exchanges authorization code for tokens
@@ -109,10 +165,18 @@ func (p *CodexProvider) ExchangeCode(ctx context.Context, code, verifier string)
 		return domainoauth.TokenPayload{}, fmt.Errorf("decode token response: %w", err)
 	}
 
+	accountID, email, err := extractAccountIdentity(tokenResp.IDToken)
+	if err != nil {
+		return domainoauth.TokenPayload{}, fmt.Errorf("extract account identity from id_token: %w", err)
+	}
+
 	return domainoauth.TokenPayload{
 		AccessToken:  tokenResp.AccessToken,
 		RefreshToken: tokenResp.RefreshToken,
+		IDToken:      tokenResp.IDToken,
+		Email:        email,
 		ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second),
+		AccountID:    accountID,
 		TokenType:    tokenResp.TokenType,
 		Scope:        tokenResp.Scope,
 	}, nil
@@ -151,10 +215,18 @@ func (p *CodexProvider) RefreshToken(ctx context.Context, refreshToken string) (
 		return domainoauth.TokenPayload{}, fmt.Errorf("decode refresh token response: %w", err)
 	}
 
+	accountID, email, err := extractAccountIdentity(tokenResp.IDToken)
+	if err != nil {
+		return domainoauth.TokenPayload{}, fmt.Errorf("extract account identity from id_token: %w", err)
+	}
+
 	return domainoauth.TokenPayload{
 		AccessToken:  tokenResp.AccessToken,
 		RefreshToken: tokenResp.RefreshToken,
+		IDToken:      tokenResp.IDToken,
+		Email:        email,
 		ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second),
+		AccountID:    accountID,
 		TokenType:    tokenResp.TokenType,
 		Scope:        tokenResp.Scope,
 	}, nil
@@ -260,10 +332,18 @@ func (p *CodexProvider) PollDevice(ctx context.Context, deviceCode string) (doma
 		return domainoauth.TokenPayload{}, fmt.Errorf("decode token response: %w", err)
 	}
 
+	accountID, email, err := extractAccountIdentity(tokenResp.IDToken)
+	if err != nil {
+		return domainoauth.TokenPayload{}, fmt.Errorf("extract account identity from id_token: %w", err)
+	}
+
 	return domainoauth.TokenPayload{
 		AccessToken:  tokenResp.AccessToken,
 		RefreshToken: tokenResp.RefreshToken,
+		IDToken:      tokenResp.IDToken,
+		Email:        email,
 		ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second),
+		AccountID:    accountID,
 		TokenType:    tokenResp.TokenType,
 		Scope:        tokenResp.Scope,
 	}, nil

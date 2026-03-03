@@ -6,14 +6,15 @@ import (
 	"github.com/duchoang/llmpool/internal/delivery/http/handler"
 	"github.com/duchoang/llmpool/internal/delivery/http/middleware"
 	configinfra "github.com/duchoang/llmpool/internal/infra/config"
+	loggerinfra "github.com/duchoang/llmpool/internal/infra/logger"
 	usecasecredential "github.com/duchoang/llmpool/internal/usecase/credential"
 	usecasehealth "github.com/duchoang/llmpool/internal/usecase/health"
 	usecaseoauth "github.com/duchoang/llmpool/internal/usecase/oauth"
 	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
 )
 
-func NewRouter(logger *zap.Logger,
+func NewRouter(
+	development bool,
 	healthService usecasehealth.Service,
 	importService usecasecredential.ImportService,
 	refreshService usecasecredential.RefreshService,
@@ -23,13 +24,20 @@ func NewRouter(logger *zap.Logger,
 	oauthSessionTTL time.Duration,
 	oauthCompletionService usecasecredential.OAuthCompletionService,
 ) *gin.Engine {
-	gin.SetMode(gin.ReleaseMode)
+	if development {
+		gin.SetMode(gin.DebugMode)
+	} else {
+		gin.SetMode(gin.ReleaseMode)
+	}
 
 	r := gin.New()
-	r.Use(gin.Recovery())
 
-	// Security-aware logging middleware with sensitive data redaction
-	r.Use(middleware.SecurityLogger(logger))
+	recoveryLogger := loggerinfra.ForModuleLazy("delivery.http.middleware.recovery")
+	requestLogger := loggerinfra.ForModuleLazy("delivery.http.middleware.security")
+
+	r.Use(middleware.RequestID())
+	r.Use(middleware.SecurityLogger(requestLogger))
+	r.Use(middleware.Recovery(recoveryLogger))
 
 	healthHandler := handler.NewHealthHandler(healthService)
 	r.GET("/health", healthHandler.Get)

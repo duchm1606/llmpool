@@ -73,6 +73,7 @@ func (m *mockOAuthProviderForIntegration) ExchangeCode(ctx context.Context, code
 			AccessToken:  "test-access-token-" + code,
 			RefreshToken: "test-refresh-token-" + code,
 			ExpiresAt:    time.Now().Add(time.Hour),
+			AccountID:    "integration-account-from-provider",
 			TokenType:    "Bearer",
 		}
 	}
@@ -115,6 +116,7 @@ func (m *mockOAuthProviderForIntegration) PollDevice(ctx context.Context, device
 		AccessToken:  "device-access-token",
 		RefreshToken: "device-refresh-token",
 		ExpiresAt:    time.Now().Add(time.Hour),
+		AccountID:    "integration-device-account-from-provider",
 		TokenType:    "Bearer",
 	}, nil
 }
@@ -243,7 +245,7 @@ func TestCodexDeviceFlowIntegration(t *testing.T) {
 	err = json.Unmarshal(w.Body.Bytes(), &pollResp)
 	require.NoError(t, err)
 	assert.Equal(t, "ok", pollResp["status"])
-	assert.NotEmpty(t, pollResp["account_id"])
+	assert.Equal(t, "integration-device-account-from-provider", pollResp["account_id"])
 }
 
 // TestCompatibilityAliasContracts tests v0/management compatibility routes

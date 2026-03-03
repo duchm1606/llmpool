@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,19 @@ import (
 	"github.com/duchoang/llmpool/internal/infra/config"
 	"time"
 )
+
+func makeIDToken(t *testing.T, payload map[string]any) string {
+	t.Helper()
+
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal id token payload: %v", err)
+	}
+	body := base64.RawURLEncoding.EncodeToString(bodyBytes)
+
+	return header + "." + body + ".sig"
+}
 
 func TestCodexProvider_BuildAuthURL(t *testing.T) {
 	provider := NewCodexProvider(config.CodexOAuthConfig{
@@ -112,9 +126,16 @@ func TestCodexProvider_ExchangeCode(t *testing.T) {
 		resp := tokenResponse{
 			AccessToken:  "mock-access-token",
 			RefreshToken: "mock-refresh-token",
-			ExpiresIn:    3600,
-			TokenType:    "Bearer",
-			Scope:        "read write",
+			IDToken: makeIDToken(t, map[string]any{
+				"email": "user@example.com",
+				"sub":   "sub-123",
+				"https://api.openai.com/auth": map[string]any{
+					"chatgpt_account_id": "acct-123",
+				},
+			}),
+			ExpiresIn: 3600,
+			TokenType: "Bearer",
+			Scope:     "read write",
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -148,6 +169,109 @@ func TestCodexProvider_ExchangeCode(t *testing.T) {
 	if payload.Scope != "read write" {
 		t.Errorf("scope: got %q, want %q", payload.Scope, "read write")
 	}
+	if payload.AccountID != "acct-123" {
+		t.Errorf("account id: got %q, want %q", payload.AccountID, "acct-123")
+	}
+	if payload.Email != "user@example.com" {
+		t.Errorf("email: got %q, want %q", payload.Email, "user@example.com")
+	}
+}
+
+func TestCodexProvider_ExchangeCode_MissingIDToken(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := tokenResponse{
+			AccessToken:  "mock-access-token",
+			RefreshToken: "mock-refresh-token",
+			ExpiresIn:    3600,
+			TokenType:    "Bearer",
+			Scope:        "read write",
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp) //nolint:errcheck,gosec
+	}))
+	defer mockServer.Close()
+
+	provider := NewCodexProvider(config.CodexOAuthConfig{
+		TokenURL:    mockServer.URL + "/token",
+		RedirectURI: "http://localhost:1455/auth/callback",
+		ClientID:    "test-client",
+		Timeout:     30 * time.Second,
+	})
+
+	_, err := provider.ExchangeCode(context.Background(), "test-auth-code", "test-verifier")
+	if err == nil {
+		t.Fatal("expected error when id_token is missing")
+	}
+	if !strings.Contains(err.Error(), "extract account identity") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExtractAccountIdentity_FallbackOrder(t *testing.T) {
+	t.Run("uses chatgpt_account_id when present", func(t *testing.T) {
+		idToken := makeIDToken(t, map[string]any{
+			"email": "user@example.com",
+			"sub":   "sub-123",
+			"https://api.openai.com/auth": map[string]any{
+				"chatgpt_account_id": "acct-123",
+			},
+		})
+
+		accountID, email, err := extractAccountIdentity(idToken)
+		if err != nil {
+			t.Fatalf("extract account identity: %v", err)
+		}
+		if accountID != "acct-123" {
+			t.Fatalf("expected account id acct-123, got %q", accountID)
+		}
+		if email != "user@example.com" {
+			t.Fatalf("expected email user@example.com, got %q", email)
+		}
+	})
+
+	t.Run("falls back to sub", func(t *testing.T) {
+		idToken := makeIDToken(t, map[string]any{
+			"email": "user@example.com",
+			"sub":   "sub-456",
+		})
+
+		accountID, _, err := extractAccountIdentity(idToken)
+		if err != nil {
+			t.Fatalf("extract account identity: %v", err)
+		}
+		if accountID != "sub-456" {
+			t.Fatalf("expected account id sub-456, got %q", accountID)
+		}
+	})
+
+	t.Run("falls back to email", func(t *testing.T) {
+		idToken := makeIDToken(t, map[string]any{
+			"email": "user@example.com",
+		})
+
+		accountID, email, err := extractAccountIdentity(idToken)
+		if err != nil {
+			t.Fatalf("extract account identity: %v", err)
+		}
+		if accountID != "user@example.com" {
+			t.Fatalf("expected account id user@example.com, got %q", accountID)
+		}
+		if email != "user@example.com" {
+			t.Fatalf("expected email user@example.com, got %q", email)
+		}
+	})
+
+	t.Run("errors when no identifier", func(t *testing.T) {
+		idToken := makeIDToken(t, map[string]any{
+			"name": "test",
+		})
+
+		_, _, err := extractAccountIdentity(idToken)
+		if err == nil {
+			t.Fatal("expected error when no identity claims are present")
+		}
+	})
 }
 
 func TestCodexProvider_ExchangeCode_ErrorResponse(t *testing.T) {
@@ -223,9 +347,12 @@ func TestCodexProvider_RefreshToken_Success(t *testing.T) {
 		resp := tokenResponse{
 			AccessToken:  "new-access-token",
 			RefreshToken: "new-refresh-token",
-			ExpiresIn:    3600,
-			TokenType:    "Bearer",
-			Scope:        "read write",
+			IDToken: makeIDToken(t, map[string]any{
+				"sub": "sub-refresh-1",
+			}),
+			ExpiresIn: 3600,
+			TokenType: "Bearer",
+			Scope:     "read write",
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -253,6 +380,9 @@ func TestCodexProvider_RefreshToken_Success(t *testing.T) {
 	}
 	if payload.TokenType != "Bearer" {
 		t.Errorf("token type: got %q, want %q", payload.TokenType, "Bearer")
+	}
+	if payload.AccountID != "sub-refresh-1" {
+		t.Errorf("account id: got %q, want %q", payload.AccountID, "sub-refresh-1")
 	}
 }
 
@@ -391,9 +521,12 @@ func TestCodexProvider_PollDevice_Success(t *testing.T) {
 		resp := tokenResponse{
 			AccessToken:  "device-access-token",
 			RefreshToken: "device-refresh-token",
-			ExpiresIn:    3600,
-			TokenType:    "Bearer",
-			Scope:        "read write",
+			IDToken: makeIDToken(t, map[string]any{
+				"sub": "sub-device-1",
+			}),
+			ExpiresIn: 3600,
+			TokenType: "Bearer",
+			Scope:     "read write",
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -421,6 +554,9 @@ func TestCodexProvider_PollDevice_Success(t *testing.T) {
 	}
 	if payload.TokenType != "Bearer" {
 		t.Errorf("token type: got %q, want %q", payload.TokenType, "Bearer")
+	}
+	if payload.AccountID != "sub-device-1" {
+		t.Errorf("account id: got %q, want %q", payload.AccountID, "sub-device-1")
 	}
 }
 

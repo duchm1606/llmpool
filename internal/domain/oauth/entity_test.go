@@ -48,8 +48,10 @@ func TestTokenPayload_Structure(t *testing.T) {
 	payload := TokenPayload{
 		AccessToken:  "access-token-123",
 		RefreshToken: "refresh-token-456",
+		IDToken:      "id-token-789",
+		Email:        "user@example.com",
 		ExpiresAt:    expiry,
-		AccountID:    "user@example.com",
+		AccountID:    "acct-123",
 		TokenType:    "Bearer",
 		Scope:        "codex",
 	}
@@ -59,6 +61,15 @@ func TestTokenPayload_Structure(t *testing.T) {
 	}
 	if payload.RefreshToken != "refresh-token-456" {
 		t.Error("RefreshToken not set correctly")
+	}
+	if payload.IDToken != "id-token-789" {
+		t.Error("IDToken not set correctly")
+	}
+	if payload.Email != "user@example.com" {
+		t.Error("Email not set correctly")
+	}
+	if payload.AccountID != "acct-123" {
+		t.Error("AccountID not set correctly")
 	}
 	if !payload.ExpiresAt.Equal(expiry) {
 		t.Error("ExpiresAt not set correctly")

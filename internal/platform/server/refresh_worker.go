@@ -4,17 +4,18 @@ import (
 	"context"
 	"time"
 
+	loggerinfra "github.com/duchoang/llmpool/internal/infra/logger"
 	usecasecredential "github.com/duchoang/llmpool/internal/usecase/credential"
 	"go.uber.org/zap"
 )
 
 type RefreshWorker struct {
 	service  usecasecredential.RefreshService
-	logger   *zap.Logger
+	logger   *loggerinfra.Logger
 	interval time.Duration
 }
 
-func NewRefreshWorker(service usecasecredential.RefreshService, logger *zap.Logger, interval time.Duration) *RefreshWorker {
+func NewRefreshWorker(service usecasecredential.RefreshService, logger *loggerinfra.Logger, interval time.Duration) *RefreshWorker {
 	return &RefreshWorker{service: service, logger: logger, interval: interval}
 }
 

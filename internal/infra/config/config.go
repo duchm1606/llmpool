@@ -37,6 +37,7 @@ type ServerConfig struct {
 
 type LogConfig struct {
 	Level       string `mapstructure:"level"`
+	Format      string `mapstructure:"format"`
 	Development bool   `mapstructure:"development"`
 }
 
@@ -116,6 +117,24 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("server.port must be > 0")
 	}
 
+	validLogLevels := map[string]struct{}{
+		"debug": {},
+		"info":  {},
+		"warn":  {},
+		"error": {},
+	}
+	if _, ok := validLogLevels[cfg.Log.Level]; !ok {
+		return nil, fmt.Errorf("log.level must be one of: debug, info, warn, error")
+	}
+
+	validLogFormats := map[string]struct{}{
+		"json": {},
+		"text": {},
+	}
+	if _, ok := validLogFormats[cfg.Log.Format]; !ok {
+		return nil, fmt.Errorf("log.format must be one of: json, text")
+	}
+
 	if cfg.Orchestrator.LBStrategy != "round-robin" && cfg.Orchestrator.LBStrategy != "fill-first" {
 		return nil, fmt.Errorf("orchestrator.lb_strategy must be one of: round-robin, fill-first")
 	}
@@ -167,6 +186,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.idle_timeout", "30s")
 
 	v.SetDefault("log.level", "info")
+	v.SetDefault("log.format", "text")
 	v.SetDefault("log.development", true)
 
 	v.SetDefault("postgres.dsn", "postgres://postgres:postgres@postgres:5432/llmpool?sslmode=disable")

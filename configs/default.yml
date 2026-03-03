@@ -11,6 +11,7 @@ server:
 
 log:
   level: info
+  format: text
   development: true
 
 postgres:

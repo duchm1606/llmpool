@@ -107,6 +107,100 @@ func TestLoad_OAuthConfigEnvironmentOverride(t *testing.T) {
 	}
 }
 
+func TestLoad_LogFormatEnvironmentOverride(t *testing.T) {
+	rootDir, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatalf("resolve root dir: %v", err)
+	}
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(oldWd)
+	}()
+
+	if err := os.Chdir(rootDir); err != nil {
+		t.Fatalf("chdir root: %v", err)
+	}
+
+	t.Setenv("LLMPOOL_SECURITY_ENCRYPTION_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
+	t.Setenv("LLMPOOL_OAUTH_CODEX_CLIENT_ID", "test-client-id")
+	t.Setenv("LLMPOOL_LOG_FORMAT", "json")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.Log.Format != "json" {
+		t.Fatalf("expected log format json, got %q", cfg.Log.Format)
+	}
+}
+
+func TestLoad_InvalidLogLevel(t *testing.T) {
+	rootDir, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatalf("resolve root dir: %v", err)
+	}
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(oldWd)
+	}()
+
+	if err := os.Chdir(rootDir); err != nil {
+		t.Fatalf("chdir root: %v", err)
+	}
+
+	t.Setenv("LLMPOOL_SECURITY_ENCRYPTION_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
+	t.Setenv("LLMPOOL_OAUTH_CODEX_CLIENT_ID", "test-client-id")
+	t.Setenv("LLMPOOL_LOG_LEVEL", "verbose")
+
+	_, err = Load()
+	if err == nil {
+		t.Fatalf("expected error when log.level is invalid")
+	}
+	if !strings.Contains(err.Error(), "log.level must be one of") {
+		t.Fatalf("unexpected error, got: %v", err)
+	}
+}
+
+func TestLoad_InvalidLogFormat(t *testing.T) {
+	rootDir, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatalf("resolve root dir: %v", err)
+	}
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(oldWd)
+	}()
+
+	if err := os.Chdir(rootDir); err != nil {
+		t.Fatalf("chdir root: %v", err)
+	}
+
+	t.Setenv("LLMPOOL_SECURITY_ENCRYPTION_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
+	t.Setenv("LLMPOOL_OAUTH_CODEX_CLIENT_ID", "test-client-id")
+	t.Setenv("LLMPOOL_LOG_FORMAT", "yaml")
+
+	_, err = Load()
+	if err == nil {
+		t.Fatalf("expected error when log.format is invalid")
+	}
+	if !strings.Contains(err.Error(), "log.format must be one of") {
+		t.Fatalf("unexpected error, got: %v", err)
+	}
+}
+
 func TestLoad_OAuthCodexUsesDefaults(t *testing.T) {
 	rootDir, err := filepath.Abs("../../..")
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	domaincredential "github.com/duchoang/llmpool/internal/domain/credential"
@@ -41,14 +42,11 @@ func NewCompletionService(repo CredentialRepository, encryptor Encryptor) *Compl
 // HandleCompletion processes successful OAuth token exchange and stores encrypted credentials
 func (s *CompletionService) HandleCompletion(ctx context.Context, sessionID string, tokenPayload domainoauth.TokenPayload) error {
 	// 1. Create credential profile from token payload
-	accountID := tokenPayload.AccountID
+	_ = sessionID
+
+	accountID := strings.TrimSpace(tokenPayload.AccountID)
 	if accountID == "" {
-		// Fallback: derive from access token if AccountID not provided
-		if len(tokenPayload.AccessToken) >= 8 {
-			accountID = tokenPayload.AccessToken[:8]
-		} else {
-			accountID = tokenPayload.AccessToken
-		}
+		return fmt.Errorf("missing account identifier")
 	}
 
 	// Build profile data structure

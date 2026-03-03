@@ -21,8 +21,12 @@ import (
 
 // Mock OAuthProvider
 type mockOAuthProvider struct {
-	authURL domainoauth.AuthorizationURL
-	err     error
+	authURL       domainoauth.AuthorizationURL
+	tokenPayload  domainoauth.TokenPayload
+	pollPayload   domainoauth.TokenPayload
+	err           error
+	exchangeError error
+	pollError     error
 }
 
 func (m *mockOAuthProvider) BuildAuthURL(_ context.Context, state string, _ string) (domainoauth.AuthorizationURL, error) {
@@ -37,8 +41,14 @@ func (m *mockOAuthProvider) BuildAuthURL(_ context.Context, state string, _ stri
 }
 
 func (m *mockOAuthProvider) ExchangeCode(_ context.Context, _ string, _ string) (domainoauth.TokenPayload, error) {
+	if m.exchangeError != nil {
+		return domainoauth.TokenPayload{}, m.exchangeError
+	}
 	if m.err != nil {
 		return domainoauth.TokenPayload{}, m.err
+	}
+	if m.tokenPayload.AccessToken != "" || m.tokenPayload.AccountID != "" || m.tokenPayload.IDToken != "" {
+		return m.tokenPayload, nil
 	}
 	return domainoauth.TokenPayload{
 		AccessToken: "test-access-token-12345",
@@ -57,6 +67,12 @@ func (m *mockOAuthProvider) StartDeviceFlow(_ context.Context) (domainoauth.Devi
 }
 
 func (m *mockOAuthProvider) PollDevice(_ context.Context, _ string) (domainoauth.TokenPayload, error) {
+	if m.pollError != nil {
+		return domainoauth.TokenPayload{}, m.pollError
+	}
+	if m.pollPayload.AccessToken != "" || m.pollPayload.AccountID != "" || m.pollPayload.IDToken != "" {
+		return m.pollPayload, nil
+	}
 	return domainoauth.TokenPayload{}, nil
 }
 
@@ -551,6 +567,163 @@ func TestOAuthHandler_HandleCallback_CompletionFailure(t *testing.T) {
 	}
 	if updatedSession.ErrorCode != "completion_failed" {
 		t.Fatalf("expected error code completion_failed, got %q", updatedSession.ErrorCode)
+	}
+}
+
+func TestOAuthHandler_HandleCallback_MissingAccountID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	provider := &mockOAuthProvider{}
+	provider.authURL = domainoauth.AuthorizationURL{}
+	store := newMockSessionStore()
+	cfg := config.CodexOAuthConfig{
+		AuthURL:     "https://auth.openai.com/oauth/authorize",
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost:1455/auth/callback",
+	}
+
+	handler := NewOAuthHandler(provider, store, cfg, 10*time.Minute)
+
+	state := oauth.GenerateState()
+	verifier, _ := oauth.GenerateVerifier()
+	session := domainoauth.OAuthSession{
+		SessionID:    state,
+		State:        domainoauth.StatePending,
+		PKCEVerifier: verifier,
+		Provider:     "codex",
+		Expiry:       time.Now().Add(10 * time.Minute),
+		CreatedAt:    time.Now(),
+	}
+	if err := store.CreatePending(context.Background(), session); err != nil {
+		t.Fatalf("failed to create pending session: %v", err)
+	}
+
+	provider.err = nil
+	provider.authURL = domainoauth.AuthorizationURL{}
+	provider.tokenPayload = domainoauth.TokenPayload{
+		AccessToken: "test-access-token-12345",
+		TokenType:   "Bearer",
+		ExpiresAt:   time.Now().Add(1 * time.Hour),
+		AccountID:   "",
+	}
+
+	router := gin.New()
+	router.GET("/v1/internal/oauth/callback", handler.HandleCallback)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/internal/oauth/callback?code=test-code&state="+state, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d", w.Code)
+	}
+
+	updatedSession, err := store.GetStatus(context.Background(), state)
+	if err != nil {
+		t.Fatalf("session not found after callback: %v", err)
+	}
+	if updatedSession.State != domainoauth.StateError {
+		t.Fatalf("expected session state error, got %v", updatedSession.State)
+	}
+	if updatedSession.ErrorCode != "missing_account_id" {
+		t.Fatalf("expected error code missing_account_id, got %q", updatedSession.ErrorCode)
+	}
+}
+
+func TestOAuthHandler_GetDeviceStatus_UsesTokenAccountID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	provider := &mockOAuthProvider{
+		pollPayload: domainoauth.TokenPayload{
+			AccessToken: "device-access-token",
+			AccountID:   "device-account-123",
+			ExpiresAt:   time.Now().Add(1 * time.Hour),
+		},
+	}
+	store := newMockSessionStore()
+	cfg := config.CodexOAuthConfig{
+		AuthURL:     "https://auth.openai.com/oauth/authorize",
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost:1455/auth/callback",
+	}
+
+	handler := NewOAuthHandler(provider, store, cfg, 10*time.Minute)
+
+	deviceCode := "device-code-123"
+	session := domainoauth.OAuthSession{
+		SessionID:    deviceCode,
+		State:        domainoauth.StatePending,
+		PKCEVerifier: "verifier",
+		Provider:     "codex",
+		Expiry:       time.Now().Add(10 * time.Minute),
+		CreatedAt:    time.Now(),
+	}
+	if err := store.CreatePending(context.Background(), session); err != nil {
+		t.Fatalf("failed to create pending session: %v", err)
+	}
+
+	router := gin.New()
+	router.GET("/v1/internal/oauth/codex-device-status", handler.GetDeviceStatus)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/internal/oauth/codex-device-status?device_code="+deviceCode, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if body["status"] != "ok" {
+		t.Fatalf("expected status ok, got %v", body["status"])
+	}
+	if body["account_id"] != "device-account-123" {
+		t.Fatalf("expected account_id device-account-123, got %v", body["account_id"])
+	}
+
+	updatedSession, err := store.GetStatus(context.Background(), deviceCode)
+	if err != nil {
+		t.Fatalf("session not found after poll: %v", err)
+	}
+	if updatedSession.State != domainoauth.StateOK {
+		t.Fatalf("expected session state OK, got %v", updatedSession.State)
+	}
+	if updatedSession.AccountID != "device-account-123" {
+		t.Fatalf("expected session account id device-account-123, got %q", updatedSession.AccountID)
+	}
+}
+
+func TestOAuthHandler_GetDeviceStatus_MissingAccountID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	provider := &mockOAuthProvider{
+		pollPayload: domainoauth.TokenPayload{
+			AccessToken: "device-access-token",
+			AccountID:   "",
+			ExpiresAt:   time.Now().Add(1 * time.Hour),
+		},
+	}
+	store := newMockSessionStore()
+	cfg := config.CodexOAuthConfig{
+		AuthURL:     "https://auth.openai.com/oauth/authorize",
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost:1455/auth/callback",
+	}
+
+	handler := NewOAuthHandler(provider, store, cfg, 10*time.Minute)
+
+	router := gin.New()
+	router.GET("/v1/internal/oauth/codex-device-status", handler.GetDeviceStatus)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/internal/oauth/codex-device-status?device_code=device-code-123", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d", w.Code)
 	}
 }
 

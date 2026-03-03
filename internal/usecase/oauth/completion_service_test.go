@@ -107,7 +107,7 @@ func TestCompletionService_HandleCompletion(t *testing.T) {
 		assert.Equal(t, "read write", profileData["scope"])
 	})
 
-	t.Run("falls back to access token prefix when AccountID is empty", func(t *testing.T) {
+	t.Run("returns error when AccountID is empty", func(t *testing.T) {
 		repo := &mockCredentialRepository{}
 		encryptor := newMockEncryptor()
 
@@ -124,12 +124,9 @@ func TestCompletionService_HandleCompletion(t *testing.T) {
 		}
 
 		err := svc.HandleCompletion(context.Background(), "session_123", tokenPayload)
-		require.NoError(t, err)
-
-		require.Len(t, repo.upserted, 1)
-		profile := repo.upserted[0]
-
-		assert.Equal(t, "access_t", profile.AccountID) // First 8 chars
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "missing account identifier")
+		require.Len(t, repo.upserted, 0)
 	})
 
 	t.Run("encryption failure returns error", func(t *testing.T) {
@@ -173,26 +170,4 @@ func TestCompletionService_HandleCompletion(t *testing.T) {
 		assert.Contains(t, err.Error(), "upsert credential profile")
 	})
 
-	t.Run("handles short access token", func(t *testing.T) {
-		repo := &mockCredentialRepository{}
-		encryptor := newMockEncryptor()
-
-		svc := NewCompletionService(repo, encryptor)
-		svc.now = func() time.Time { return fixedNow }
-
-		tokenPayload := domainoauth.TokenPayload{
-			AccessToken:  "short",
-			RefreshToken: "refresh_token_67890",
-			ExpiresAt:    expiresAt,
-			AccountID:    "", // Empty, will fallback to access token
-		}
-
-		err := svc.HandleCompletion(context.Background(), "session_123", tokenPayload)
-		require.NoError(t, err)
-
-		require.Len(t, repo.upserted, 1)
-		profile := repo.upserted[0]
-
-		assert.Equal(t, "short", profile.AccountID) // Uses full token when < 8 chars
-	})
 }

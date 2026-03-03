@@ -5,10 +5,17 @@ import (
 	"io"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
+
+type requestLogger interface {
+	Info(msg string, fields ...zap.Field)
+	Warn(msg string, fields ...zap.Field)
+	Error(msg string, fields ...zap.Field)
+}
 
 // SensitiveParams are OAuth/security-related query parameters and form fields to redact
 var SensitiveParams = []string{
@@ -28,18 +35,38 @@ var SensitiveParams = []string{
 const RedactedValue = "[REDACTED]"
 
 // SecurityLogger creates middleware that logs requests with sensitive data redaction
-func SecurityLogger(logger *zap.Logger) gin.HandlerFunc {
+func SecurityLogger(logger requestLogger) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Redact query params
+		start := time.Now()
+
 		redactedPath := redactQueryParams(c.Request.URL.Path, c.Request.URL.RawQuery)
+		requestID := GetRequestID(c)
 
 		c.Next()
 
-		logger.Info("request",
+		loggerFields := []zap.Field{
+			zap.String("request_id", requestID),
 			zap.String("method", c.Request.Method),
 			zap.String("path", redactedPath),
 			zap.Int("status", c.Writer.Status()),
-		)
+			zap.Duration("latency", time.Since(start)),
+			zap.String("client_ip", c.ClientIP()),
+			zap.Int("body_size", c.Writer.Size()),
+		}
+
+		if len(c.Errors) > 0 {
+			loggerFields = append(loggerFields, zap.String("error", c.Errors.String()))
+		}
+
+		status := c.Writer.Status()
+		switch {
+		case status >= 500:
+			logger.Error("request", loggerFields...)
+		case status >= 400:
+			logger.Warn("request", loggerFields...)
+		default:
+			logger.Info("request", loggerFields...)
+		}
 	}
 }
 

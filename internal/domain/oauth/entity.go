@@ -32,6 +32,8 @@ type OAuthSession struct {
 type TokenPayload struct {
 	AccessToken  string
 	RefreshToken string
+	IDToken      string
+	Email        string
 	ExpiresAt    time.Time
 	AccountID    string
 	TokenType    string

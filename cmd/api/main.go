@@ -21,22 +21,22 @@ import (
 	"github.com/duchoang/llmpool/internal/platform/server"
 	usecasecredential "github.com/duchoang/llmpool/internal/usecase/credential"
 	usecasehealth "github.com/duchoang/llmpool/internal/usecase/health"
-
 	"go.uber.org/zap"
 )
 
 func main() {
+	log := loggerinfra.ForModuleLazy("main")
+
 	cfg, err := configinfra.Load()
 	if err != nil {
 		panic(fmt.Errorf("load config: %w", err))
 	}
 
-	logger, err := loggerinfra.New(cfg.Log)
-	if err != nil {
+	if err := loggerinfra.Initialize(cfg.Log); err != nil {
 		panic(fmt.Errorf("init logger: %w", err))
 	}
 	defer func() {
-		_ = logger.Sync()
+		_ = loggerinfra.Sync()
 	}()
 
 	encryptionKey := os.Getenv("LLMPOOL_SECURITY_ENCRYPTION_KEY")
@@ -57,7 +57,7 @@ func main() {
 	}
 	defer func() {
 		if closeErr := postgresConn.Close(context.Background()); closeErr != nil {
-			logger.Error("close postgres connection", zap.Error(closeErr))
+			log.Error("close postgres connection", zap.Error(closeErr))
 		}
 	}()
 
@@ -67,10 +67,10 @@ func main() {
 	}
 	defer func() {
 		if closeErr := redisClient.Close(); closeErr != nil {
-			logger.Error("close redis connection", zap.Error(closeErr))
+			log.Error("close redis connection", zap.Error(closeErr))
 		}
 	}()
-	logger.Info("redis connected", zap.String("addr", cfg.Redis.Addr))
+	log.Info("redis connected", zap.String("addr", cfg.Redis.Addr))
 
 	profileRepo := credentialrepo.NewCredentialRepository(postgresConn)
 	importService := usecasecredential.NewImportService(profileRepo, encryptor)
@@ -94,10 +94,20 @@ func main() {
 
 	refreshService := usecasecredential.NewRefreshService(profileRepo, refreshers, encryptor)
 
-	router := deliveryhttp.NewRouter(logger, healthService, importService, refreshService, oauthProvider, oauthSessionStore, cfg.OAuth.Codex, cfg.OAuth.Codex.SessionTTL, oauthCompletionService)
+	router := deliveryhttp.NewRouter(
+		cfg.Log.Development,
+		healthService,
+		importService,
+		refreshService,
+		oauthProvider,
+		oauthSessionStore,
+		cfg.OAuth.Codex,
+		cfg.OAuth.Codex.SessionTTL,
+		oauthCompletionService,
+	)
 
 	httpServer := server.NewHTTPServer(cfg.Server, router)
-	refreshWorker := server.NewRefreshWorker(refreshService, logger, cfg.Credential.RefreshInterval)
+	refreshWorker := server.NewRefreshWorker(refreshService, loggerinfra.ForModuleLazy("platform.server.refresh_worker"), cfg.Credential.RefreshInterval)
 
 	shutdownCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -105,27 +115,28 @@ func main() {
 	go refreshWorker.Start(shutdownCtx)
 
 	go func() {
-		logger.Info("starting API server",
+		log.Info("starting API server",
 			zap.String("host", cfg.Server.Host),
 			zap.Int("port", cfg.Server.Port),
 			zap.String("lb_strategy", cfg.Orchestrator.LBStrategy),
+			zap.Bool("gin_development", cfg.Log.Development),
 		)
 
 		if serveErr := httpServer.Start(); serveErr != nil && serveErr != http.ErrServerClosed {
-			logger.Fatal("server stopped unexpectedly", zap.Error(serveErr))
+			log.Fatal("server stopped unexpectedly", zap.Error(serveErr))
 		}
 	}()
 
 	<-shutdownCtx.Done()
-	logger.Info("shutdown signal received")
+	log.Info("shutdown signal received")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if shutdownErr := httpServer.Shutdown(ctx); shutdownErr != nil {
-		logger.Error("graceful shutdown failed", zap.Error(shutdownErr))
+		log.Error("graceful shutdown failed", zap.Error(shutdownErr))
 		os.Exit(1)
 	}
 
-	logger.Info("server shutdown complete")
+	log.Info("server shutdown complete")
 }
