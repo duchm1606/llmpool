@@ -67,7 +67,25 @@ type CredentialConfig struct {
 }
 
 type OAuthConfig struct {
-	Codex CodexOAuthConfig `mapstructure:"codex"`
+	Codex   CodexOAuthConfig   `mapstructure:"codex"`
+	Copilot CopilotOAuthConfig `mapstructure:"copilot"`
+}
+
+type CopilotOAuthConfig struct {
+	ClientID        string        `mapstructure:"client_id"`
+	DeviceCodeURL   string        `mapstructure:"device_code_url"`
+	TokenURL        string        `mapstructure:"token_url"`
+	CopilotTokenURL string        `mapstructure:"copilot_token_url"`
+	UserInfoURL     string        `mapstructure:"user_info_url"`
+	Scope           string        `mapstructure:"scope"`
+	Timeout         time.Duration `mapstructure:"timeout"`
+	SessionTTL      time.Duration `mapstructure:"session_ttl"`
+	AccountType     string        `mapstructure:"account_type"`
+	// EnterpriseURL is the optional GitHub Enterprise Server URL.
+	// When set, the Copilot API base URL becomes https://copilot-api.<normalized_domain>
+	// where normalized_domain strips the scheme and trailing slash.
+	// Takes precedence over AccountType for URL resolution.
+	EnterpriseURL string `mapstructure:"enterprise_url"`
 }
 
 type CodexOAuthConfig struct {
@@ -93,6 +111,7 @@ type LivenessConfig struct {
 	NetworkErrorCooldown time.Duration `mapstructure:"network_error_cooldown"`
 	NetworkMaxRetries    int           `mapstructure:"network_max_retries"`
 	CodexUsageURL        string        `mapstructure:"codex_usage_url"`
+	CopilotUsageURL      string        `mapstructure:"copilot_usage_url"`
 	CheckTimeout         time.Duration `mapstructure:"check_timeout"`
 }
 
@@ -127,6 +146,10 @@ type ProviderConfig struct {
 	Timeout  time.Duration     `mapstructure:"timeout"`
 	Models   []string          `mapstructure:"models"`
 	Headers  map[string]string `mapstructure:"headers"`
+	// EnableResponsesRouting enables /responses endpoint routing for supported models.
+	// When true, GPT-5+ models (except gpt-5-mini) use /responses instead of /chat/completions.
+	// This mirrors opencode reference behavior. Default: false for safe rollout.
+	EnableResponsesRouting bool `mapstructure:"enable_responses_routing"`
 }
 
 func Load() (*Config, error) {
@@ -223,6 +246,43 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("oauth.codex.session_ttl must be > 0")
 	}
 
+	if cfg.OAuth.Copilot.ClientID == "" {
+		return nil, fmt.Errorf("oauth.copilot.client_id is required")
+	}
+	if cfg.OAuth.Copilot.DeviceCodeURL == "" {
+		return nil, fmt.Errorf("oauth.copilot.device_code_url is required")
+	}
+	if cfg.OAuth.Copilot.TokenURL == "" {
+		return nil, fmt.Errorf("oauth.copilot.token_url is required")
+	}
+	if cfg.OAuth.Copilot.CopilotTokenURL == "" {
+		return nil, fmt.Errorf("oauth.copilot.copilot_token_url is required")
+	}
+	if cfg.OAuth.Copilot.UserInfoURL == "" {
+		return nil, fmt.Errorf("oauth.copilot.user_info_url is required")
+	}
+	if cfg.OAuth.Copilot.Scope == "" {
+		return nil, fmt.Errorf("oauth.copilot.scope is required")
+	}
+	if cfg.OAuth.Copilot.Timeout <= 0 {
+		return nil, fmt.Errorf("oauth.copilot.timeout must be > 0")
+	}
+	if cfg.OAuth.Copilot.SessionTTL <= 0 {
+		return nil, fmt.Errorf("oauth.copilot.session_ttl must be > 0")
+	}
+	if cfg.OAuth.Copilot.AccountType == "" {
+		return nil, fmt.Errorf("oauth.copilot.account_type is required")
+	}
+
+	validCopilotAccountTypes := map[string]struct{}{
+		"individual": {},
+		"business":   {},
+		"enterprise": {},
+	}
+	if _, ok := validCopilotAccountTypes[strings.ToLower(strings.TrimSpace(cfg.OAuth.Copilot.AccountType))]; !ok {
+		return nil, fmt.Errorf("oauth.copilot.account_type must be one of: individual, business, enterprise")
+	}
+
 	// Validate liveness config if enabled
 	if cfg.Liveness.Enabled {
 		if cfg.Liveness.SampleInterval <= 0 {
@@ -281,6 +341,18 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("credential.refresh_interval", "1m")
 
+	// Copilot OAuth defaults (public client, non-sensitive)
+	v.SetDefault("oauth.copilot.client_id", "Iv1.b507a08c87ecfe98")
+	v.SetDefault("oauth.copilot.device_code_url", "https://github.com/login/device/code")
+	v.SetDefault("oauth.copilot.token_url", "https://github.com/login/oauth/access_token")
+	v.SetDefault("oauth.copilot.copilot_token_url", "https://api.github.com/copilot_internal/v2/token")
+	v.SetDefault("oauth.copilot.user_info_url", "https://api.github.com/user")
+	v.SetDefault("oauth.copilot.scope", "read:user")
+	v.SetDefault("oauth.copilot.timeout", "30s")
+	v.SetDefault("oauth.copilot.session_ttl", "600s")
+	v.SetDefault("oauth.copilot.account_type", "individual")
+	v.SetDefault("oauth.copilot.enterprise_url", "")
+
 	// Liveness checker defaults
 	v.SetDefault("liveness.enabled", true)
 	v.SetDefault("liveness.sample_interval", "5m")
@@ -293,6 +365,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("liveness.network_error_cooldown", "5m")
 	v.SetDefault("liveness.network_max_retries", 3)
 	v.SetDefault("liveness.codex_usage_url", "https://chatgpt.com/backend-api/wham/usage")
+	v.SetDefault("liveness.copilot_usage_url", "https://api.github.com/copilot_internal/user")
 	v.SetDefault("liveness.check_timeout", "10s")
 
 	// Routing defaults

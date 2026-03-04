@@ -14,6 +14,28 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// RouterDeps holds all dependencies for the router.
+type RouterDeps struct {
+	Development            bool
+	HealthService          usecasehealth.Service
+	ImportService          usecasecredential.ImportService
+	RefreshService         usecasecredential.RefreshService
+	OAuthProvider          usecaseoauth.OAuthProvider
+	OAuthSessionStore      usecaseoauth.OAuthSessionStore
+	OAuthConfig            configinfra.CodexOAuthConfig
+	OAuthSessionTTL        time.Duration
+	OAuthCompletionService usecasecredential.OAuthCompletionService
+	CompletionService      usecasecompletion.CompletionService // Optional: may be nil
+
+	// Copilot OAuth dependencies (optional)
+	CopilotOAuthProvider          usecaseoauth.OAuthProvider
+	CopilotOAuthSessionTTL        time.Duration
+	CopilotOAuthCompletionService usecasecredential.OAuthCompletionService
+
+	// Usage cache for usage endpoint (optional)
+	UsageCache handler.UsageCache
+}
+
 func NewRouter(
 	development bool,
 	healthService usecasehealth.Service,
@@ -26,7 +48,22 @@ func NewRouter(
 	oauthCompletionService usecasecredential.OAuthCompletionService,
 	completionService usecasecompletion.CompletionService, // Optional: may be nil
 ) *gin.Engine {
-	if development {
+	return NewRouterWithDeps(RouterDeps{
+		Development:            development,
+		HealthService:          healthService,
+		ImportService:          importService,
+		RefreshService:         refreshService,
+		OAuthProvider:          oauthProvider,
+		OAuthSessionStore:      oauthSessionStore,
+		OAuthConfig:            oauthConfig,
+		OAuthSessionTTL:        oauthSessionTTL,
+		OAuthCompletionService: oauthCompletionService,
+		CompletionService:      completionService,
+	})
+}
+
+func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
+	if deps.Development {
 		gin.SetMode(gin.DebugMode)
 	} else {
 		gin.SetMode(gin.ReleaseMode)
@@ -41,16 +78,16 @@ func NewRouter(
 	r.Use(middleware.SecurityLogger(requestLogger))
 	r.Use(middleware.Recovery(recoveryLogger))
 
-	healthHandler := handler.NewHealthHandler(healthService)
+	healthHandler := handler.NewHealthHandler(deps.HealthService)
 	r.GET("/health", healthHandler.Get)
 
-	credentialHandler := handler.NewCredentialHandler(importService)
+	credentialHandler := handler.NewCredentialHandler(deps.ImportService)
 	r.POST("/v1/internal/auth-profiles/import", credentialHandler.Import)
 
-	refreshHandler := handler.NewRefreshHandler(refreshService)
+	refreshHandler := handler.NewRefreshHandler(deps.RefreshService)
 	r.POST("/v1/internal/auth-profiles/refresh", refreshHandler.Refresh)
 
-	oauthHandler := handler.NewOAuthHandler(oauthProvider, oauthSessionStore, oauthConfig, oauthSessionTTL, oauthCompletionService)
+	oauthHandler := handler.NewOAuthHandler(deps.OAuthProvider, deps.OAuthSessionStore, deps.OAuthConfig, deps.OAuthSessionTTL, deps.OAuthCompletionService)
 	r.GET("/v1/internal/oauth/codex-auth-url", oauthHandler.GetAuthURL)
 	r.GET("/v0/management/codex-auth-url", oauthHandler.GetAuthURLCompatibility)
 
@@ -63,7 +100,7 @@ func NewRouter(
 
 	r.GET("/v0/management/get-auth-status", oauthHandler.GetStatus)
 
-	// Device flow endpoints
+	// Device flow endpoints (Codex)
 	r.POST("/v1/internal/oauth/codex-device-code", oauthHandler.StartDeviceFlow)
 	r.GET("/v1/internal/oauth/codex-device-status", oauthHandler.GetDeviceStatus)
 
@@ -75,12 +112,31 @@ func NewRouter(
 	r.POST("/v0/management/codex-device-code", oauthHandler.StartDeviceFlow)
 	r.GET("/v0/management/codex-device-status", oauthHandler.GetDeviceStatus)
 
+	// Copilot OAuth device flow endpoints
+	if deps.CopilotOAuthProvider != nil {
+		copilotOAuthHandler := handler.NewCopilotOAuthHandler(
+			deps.CopilotOAuthProvider,
+			deps.OAuthSessionStore, // Reuse session store
+			deps.CopilotOAuthSessionTTL,
+			deps.CopilotOAuthCompletionService,
+		)
+		r.POST("/v1/internal/oauth/copilot-device-code", copilotOAuthHandler.StartDeviceFlow)
+		r.GET("/v1/internal/oauth/copilot-device-status", copilotOAuthHandler.GetDeviceStatus)
+	}
+
+	// Usage endpoint for Copilot quota information
+	if deps.UsageCache != nil {
+		usageLogger := loggerinfra.ForModule("delivery.http.handler.usage")
+		usageHandler := handler.NewUsageHandler(deps.UsageCache, usageLogger)
+		r.GET("/v1/internal/usage", usageHandler.ListUsages)
+	}
+
 	// OpenAI-compatible completion API routes
-	if completionService != nil {
+	if deps.CompletionService != nil {
 		completionLogger := loggerinfra.ForModule("delivery.http.handler.completion")
-		chatHandler := handler.NewChatHandler(completionService, completionLogger)
-		modelsHandler := handler.NewModelsHandler(completionService, completionLogger)
-		responsesHandler := handler.NewResponsesHandler(completionService, completionLogger)
+		chatHandler := handler.NewChatHandler(deps.CompletionService, completionLogger)
+		modelsHandler := handler.NewModelsHandler(deps.CompletionService, completionLogger)
+		responsesHandler := handler.NewResponsesHandler(deps.CompletionService, completionLogger)
 
 		// Chat completions (primary endpoint)
 		r.POST("/v1/chat/completions", chatHandler.ChatCompletion)

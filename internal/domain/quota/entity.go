@@ -155,3 +155,67 @@ func CalculateRateLimitCooldown(retryCount int, cfg CooldownConfig) time.Duratio
 	}
 	return cooldown
 }
+
+// CopilotQuotaSnapshot represents quota details for a specific usage type.
+// Matches the GitHub Copilot internal API response structure.
+type CopilotQuotaSnapshot struct {
+	Entitlement      int64   `json:"entitlement"`
+	OverageCount     int64   `json:"overage_count"`
+	OveragePermitted bool    `json:"overage_permitted"`
+	PercentRemaining float64 `json:"percent_remaining"`
+	QuotaID          string  `json:"quota_id"`
+	QuotaRemaining   int64   `json:"quota_remaining"`
+	Remaining        int64   `json:"remaining"`
+	Unlimited        bool    `json:"unlimited"`
+	TimestampUTC     string  `json:"timestamp_utc,omitempty"`
+}
+
+// CopilotQuotaSnapshots holds all quota types.
+type CopilotQuotaSnapshots struct {
+	Chat                *CopilotQuotaSnapshot `json:"chat,omitempty"`
+	Completions         *CopilotQuotaSnapshot `json:"completions,omitempty"`
+	PremiumInteractions *CopilotQuotaSnapshot `json:"premium_interactions,omitempty"`
+}
+
+// CopilotEndpoints holds the API endpoints for a Copilot account.
+type CopilotEndpoints struct {
+	API           string `json:"api,omitempty"`
+	OriginTracker string `json:"origin-tracker,omitempty"`
+	Proxy         string `json:"proxy,omitempty"`
+	Telemetry     string `json:"telemetry,omitempty"`
+}
+
+// CopilotUsage represents the full usage response from GitHub Copilot API.
+// This mirrors the response from https://api.github.com/copilot_internal/user
+type CopilotUsage struct {
+	// Credential identification
+	CredentialID string `json:"credential_id"`
+
+	// User info
+	Login string `json:"login,omitempty"`
+
+	// Account info
+	AccessTypeSKU        string `json:"access_type_sku,omitempty"`
+	AnalyticsTrackingID  string `json:"analytics_tracking_id,omitempty"`
+	AssignedDate         string `json:"assigned_date,omitempty"`
+	CanSignupForLimited  bool   `json:"can_signup_for_limited"`
+	ChatEnabled          bool   `json:"chat_enabled"`
+	CopilotIgnoreEnabled bool   `json:"copilotignore_enabled"`
+	CopilotPlan          string `json:"copilot_plan,omitempty"`
+	IsMCPEnabled         bool   `json:"is_mcp_enabled"`
+	RestrictedTelemetry  bool   `json:"restricted_telemetry"`
+
+	// Organization info
+	OrganizationLoginList []string `json:"organization_login_list,omitempty"`
+
+	// Endpoints
+	Endpoints *CopilotEndpoints `json:"endpoints,omitempty"`
+
+	// Quota info
+	QuotaResetDate    string                 `json:"quota_reset_date,omitempty"`
+	QuotaResetDateUTC string                 `json:"quota_reset_date_utc,omitempty"`
+	QuotaSnapshots    *CopilotQuotaSnapshots `json:"quota_snapshots,omitempty"`
+
+	// Metadata
+	FetchedAt time.Time `json:"fetched_at"`
+}

@@ -11,9 +11,11 @@ import (
 )
 
 const (
-	credStateKeyPrefix  = "quota:cred:"  //nolint:gosec // Not credentials
-	modelStateKeyPrefix = "quota:model:" //nolint:gosec // Not credentials
-	credStatesPattern   = "quota:cred:*" //nolint:gosec // Not credentials
+	credStateKeyPrefix    = "quota:cred:"           //nolint:gosec // Not credentials
+	modelStateKeyPrefix   = "quota:model:"          //nolint:gosec // Not credentials
+	credStatesPattern     = "quota:cred:*"          //nolint:gosec // Not credentials
+	copilotUsageKeyPrefix = "quota:copilot_usage:"  //nolint:gosec // Not credentials
+	copilotUsagePattern   = "quota:copilot_usage:*" //nolint:gosec // Not credentials
 )
 
 // RedisStateCache implements StateCache using Redis.
@@ -169,4 +171,86 @@ func (c *RedisStateCache) CountCredentialStates(ctx context.Context) (int64, err
 		}
 	}
 	return count, nil
+}
+
+// GetCopilotUsage retrieves cached Copilot usage for a credential.
+func (c *RedisStateCache) GetCopilotUsage(ctx context.Context, credentialID string) (*domainquota.CopilotUsage, error) {
+	key := copilotUsageKeyPrefix + credentialID
+	data, err := c.client.Get(ctx, key).Bytes()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, nil // Cache miss is not an error
+		}
+		return nil, fmt.Errorf("get copilot usage: %w", err)
+	}
+
+	var usage domainquota.CopilotUsage
+	if err := json.Unmarshal(data, &usage); err != nil {
+		return nil, fmt.Errorf("unmarshal copilot usage: %w", err)
+	}
+
+	return &usage, nil
+}
+
+// SetCopilotUsage stores Copilot usage with TTL.
+func (c *RedisStateCache) SetCopilotUsage(ctx context.Context, usage domainquota.CopilotUsage, ttl time.Duration) error {
+	key := copilotUsageKeyPrefix + usage.CredentialID
+	data, err := json.Marshal(usage)
+	if err != nil {
+		return fmt.Errorf("marshal copilot usage: %w", err)
+	}
+
+	if err := c.client.Set(ctx, key, data, ttl).Err(); err != nil {
+		return fmt.Errorf("set copilot usage: %w", err)
+	}
+
+	return nil
+}
+
+// ListCopilotUsages retrieves all cached Copilot usages.
+func (c *RedisStateCache) ListCopilotUsages(ctx context.Context) ([]domainquota.CopilotUsage, error) {
+	var allKeys []string
+	var cursor uint64
+
+	for {
+		keys, nextCursor, err := c.client.Scan(ctx, cursor, copilotUsagePattern, 100).Result()
+		if err != nil {
+			return nil, fmt.Errorf("scan copilot usage keys: %w", err)
+		}
+		allKeys = append(allKeys, keys...)
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+
+	if len(allKeys) == 0 {
+		return []domainquota.CopilotUsage{}, nil
+	}
+
+	pipe := c.client.Pipeline()
+	cmds := make([]*redis.StringCmd, len(allKeys))
+	for i, key := range allKeys {
+		cmds[i] = pipe.Get(ctx, key)
+	}
+
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return nil, fmt.Errorf("exec pipeline: %w", err)
+	}
+
+	usages := make([]domainquota.CopilotUsage, 0, len(allKeys))
+	for _, cmd := range cmds {
+		data, err := cmd.Bytes()
+		if err != nil {
+			continue
+		}
+
+		var usage domainquota.CopilotUsage
+		if err := json.Unmarshal(data, &usage); err != nil {
+			continue
+		}
+		usages = append(usages, usage)
+	}
+
+	return usages, nil
 }

@@ -263,26 +263,44 @@ func (r *dynamicRegistry) GetProvidersForModel(model string) []domainprovider.Pr
 }
 
 // GetAllModels returns a deduplicated list of all available models.
+// For models supported by multiple providers, it also returns provider-prefixed versions
+// to allow explicit provider selection (e.g., "copilot/gpt-5").
 func (r *dynamicRegistry) GetAllModels() []domaincompletion.Model {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	now := time.Now().Unix()
-	models := make([]domaincompletion.Model, 0, len(r.modelIndex))
+	// Estimate capacity: base models + prefixed versions for multi-provider models
+	models := make([]domaincompletion.Model, 0, len(r.modelIndex)*2)
 
-	for modelID := range r.modelIndex {
-		// Determine owner based on first provider
+	for modelID, providers := range r.modelIndex {
+		// Determine owner based on first provider (priority order)
 		ownedBy := "llmpool"
-		if providers := r.modelIndex[modelID]; len(providers) > 0 {
+		if len(providers) > 0 {
 			ownedBy = string(providers[0])
 		}
 
+		// Add base model (routes by priority)
 		models = append(models, domaincompletion.Model{
 			ID:      modelID,
 			Object:  "model",
 			Created: now,
 			OwnedBy: ownedBy,
 		})
+
+		// If model is supported by multiple providers, add provider-prefixed versions
+		// This allows users to force routing: "copilot/gpt-5" -> force copilot
+		if len(providers) > 1 {
+			for _, providerID := range providers {
+				prefixedID := string(providerID) + "/" + modelID
+				models = append(models, domaincompletion.Model{
+					ID:      prefixedID,
+					Object:  "model",
+					Created: now,
+					OwnedBy: string(providerID),
+				})
+			}
+		}
 	}
 
 	return models

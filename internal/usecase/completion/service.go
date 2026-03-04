@@ -70,8 +70,8 @@ func (s *service) ChatCompletion(
 	var lastAPIErr *domaincompletion.APIError
 
 	for attempt := 0; attempt < s.config.MaxFallbackAttempts; attempt++ {
-		// Route to a provider
-		decision, err := s.router.RouteWithFallback(ctx, req.Model, excludeProviders)
+		// Route to a provider (with optional provider hint)
+		decision, err := s.router.RouteWithHint(ctx, req.Model, req.ProviderHint, excludeProviders)
 		if err != nil {
 			// No more providers available
 			if lastAPIErr != nil {
@@ -87,6 +87,7 @@ func (s *service) ChatCompletion(
 		s.logger.Debug("attempting provider",
 			zap.String("provider", string(decision.ProviderID)),
 			zap.String("model", req.Model),
+			zap.String("provider_hint", req.ProviderHint),
 			zap.Int("attempt", attempt+1),
 		)
 
@@ -172,8 +173,8 @@ func (s *service) ChatCompletionStream(
 	var lastErr error
 
 	for attempt := 0; attempt < s.config.MaxFallbackAttempts; attempt++ {
-		// Route to a provider
-		decision, err := s.router.RouteWithFallback(ctx, req.Model, excludeProviders)
+		// Route to a provider (with optional provider hint)
+		decision, err := s.router.RouteWithHint(ctx, req.Model, req.ProviderHint, excludeProviders)
 		if err != nil {
 			var apiErr *domaincompletion.APIError
 			if errors.As(err, &apiErr) {
@@ -185,6 +186,7 @@ func (s *service) ChatCompletionStream(
 		s.logger.Debug("attempting streaming to provider",
 			zap.String("provider", string(decision.ProviderID)),
 			zap.String("model", req.Model),
+			zap.String("provider_hint", req.ProviderHint),
 			zap.Int("attempt", attempt+1),
 		)
 

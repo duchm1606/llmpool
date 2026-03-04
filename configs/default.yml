@@ -38,6 +38,20 @@ oauth:
     poll_url: https://auth.openai.com/device/poll
     timeout: 30s
     session_ttl: 600s
+  copilot:
+    client_id: Iv1.b507a08c87ecfe98
+    device_code_url: https://github.com/login/device/code
+    token_url: https://github.com/login/oauth/access_token
+    copilot_token_url: https://api.github.com/copilot_internal/v2/token
+    user_info_url: https://api.github.com/user
+    scope: read:user
+    timeout: 30s
+    session_ttl: 600s
+    account_type: individual
+    # enterprise_url: Optional GitHub Enterprise Server URL.
+    # When set, Copilot API base URL becomes https://copilot-api.<normalized_domain>
+    # Example: https://github.mycompany.com -> https://copilot-api.github.mycompany.com
+    enterprise_url: ""
 
 liveness:
   enabled: true
@@ -90,12 +104,15 @@ providers:
     # Supported: gpt-5, gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-4, gpt-3.5-turbo, o1, o1-preview, o1-mini, o3, o3-mini
     models: []
   copilot:
-    enabled: false
+    enabled: true
     name: "GitHub Copilot"
     base_url: "https://api.githubcopilot.com"
     auth_type: bearer_pool
     timeout: 120s
     models: []
+    # enable_responses_routing: Enable /responses endpoint for GPT-5+ models (except gpt-5-mini).
+    # When true, mirrors opencode reference behavior. Default: false for safe rollout.
+    enable_responses_routing: true
   openai:
     enabled: false
     name: "OpenAI Direct"

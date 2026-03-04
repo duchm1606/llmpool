@@ -489,3 +489,66 @@ func TestLoad_LivenessDisabledSkipsValidation(t *testing.T) {
 		t.Fatal("expected liveness to be disabled")
 	}
 }
+
+func TestLoad_RequiresOAuthCopilotAccountTypeFromAllowedSet(t *testing.T) {
+	rootDir, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatalf("resolve root dir: %v", err)
+	}
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(oldWd)
+	}()
+
+	if err := os.Chdir(rootDir); err != nil {
+		t.Fatalf("chdir root: %v", err)
+	}
+
+	t.Setenv("LLMPOOL_SECURITY_ENCRYPTION_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
+	t.Setenv("LLMPOOL_OAUTH_CODEX_CLIENT_ID", "test-client-id")
+	t.Setenv("LLMPOOL_OAUTH_COPILOT_ACCOUNT_TYPE", "team")
+
+	_, err = Load()
+	if err == nil {
+		t.Fatalf("expected error when oauth.copilot.account_type is invalid")
+	}
+	if !strings.Contains(err.Error(), "oauth.copilot.account_type must be one of") {
+		t.Fatalf("unexpected error, got: %v", err)
+	}
+}
+
+func TestLoad_AllowsOAuthCopilotAccountTypeBusiness(t *testing.T) {
+	rootDir, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatalf("resolve root dir: %v", err)
+	}
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(oldWd)
+	}()
+
+	if err := os.Chdir(rootDir); err != nil {
+		t.Fatalf("chdir root: %v", err)
+	}
+
+	t.Setenv("LLMPOOL_SECURITY_ENCRYPTION_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
+	t.Setenv("LLMPOOL_OAUTH_CODEX_CLIENT_ID", "test-client-id")
+	t.Setenv("LLMPOOL_OAUTH_COPILOT_ACCOUNT_TYPE", "business")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.OAuth.Copilot.AccountType != "business" {
+		t.Fatalf("expected oauth.copilot.account_type=business, got %q", cfg.OAuth.Copilot.AccountType)
+	}
+}

@@ -93,9 +93,16 @@ func main() {
 		"iflow":       refreshinfra.NewNoopRefresher(),
 		"antigravity": refreshinfra.NewNoopRefresher(),
 		"kiro":        refreshinfra.NewNoopRefresher(),
-		"copilot":     refreshinfra.NewNoopRefresher(),
 		"codex":       oauthinfra.NewCodexRefresher(oauthProvider),
 	}
+
+	// Initialize Copilot OAuth provider and refresher
+	copilotProvider := oauthinfra.NewCopilotProvider(cfg.OAuth.Copilot)
+	copilotRefresher := oauthinfra.NewCopilotRefresher(copilotProvider)
+	refreshers["copilot"] = copilotRefresher
+
+	// Create Copilot OAuth completion service
+	copilotOAuthCompletionService := usecasecredential.NewCopilotCompletionService(profileRepo, encryptor)
 
 	refreshService := usecasecredential.NewRefreshService(profileRepo, refreshers, encryptor)
 
@@ -108,12 +115,21 @@ func main() {
 		Timeout:  cfg.Liveness.CheckTimeout,
 	}
 	codexChecker := quotainfra.NewCodexChecker(codexCheckerCfg)
+
+	// Create Copilot checker for GitHub Copilot credentials
+	copilotCheckerCfg := quotainfra.CopilotCheckerConfig{
+		UsageURL: cfg.Liveness.CopilotUsageURL,
+		Timeout:  cfg.Liveness.CheckTimeout,
+	}
+	copilotChecker := quotainfra.NewCopilotChecker(copilotCheckerCfg)
+
 	noopChecker := quotainfra.NewNoopChecker()
 
-	// Route codex and openai to Codex checker, others use noop
+	// Route to appropriate checkers by credential type
 	quotaCheckers := map[string]quotainfra.ProviderChecker{
-		"codex":  codexChecker,
-		"openai": codexChecker,
+		"codex":   codexChecker,
+		"openai":  codexChecker,
+		"copilot": copilotChecker,
 	}
 	quotaChecker := quotainfra.NewCheckerRouter(quotaCheckers, noopChecker)
 	quotaServiceCfg := usecasequota.ServiceConfig{
@@ -136,6 +152,9 @@ func main() {
 		quotaServiceCfg,
 	)
 
+	// Set copilot usage fetcher to enable full usage tracking
+	quotaService.SetCopilotUsageFetcher(copilotChecker)
+
 	quotaWorkerCfg := server.QuotaWorkerConfig{
 		SampleInterval:    cfg.Liveness.SampleInterval,
 		FullSweepInterval: cfg.Liveness.FullSweepInterval,
@@ -156,18 +175,22 @@ func main() {
 		)
 	}
 
-	router := deliveryhttp.NewRouter(
-		cfg.Log.Development,
-		healthService,
-		importService,
-		refreshService,
-		oauthProvider,
-		oauthSessionStore,
-		cfg.OAuth.Codex,
-		cfg.OAuth.Codex.SessionTTL,
-		oauthCompletionService,
-		completionService, // May be nil if routing disabled
-	)
+	router := deliveryhttp.NewRouterWithDeps(deliveryhttp.RouterDeps{
+		Development:                   cfg.Log.Development,
+		HealthService:                 healthService,
+		ImportService:                 importService,
+		RefreshService:                refreshService,
+		OAuthProvider:                 oauthProvider,
+		OAuthSessionStore:             oauthSessionStore,
+		OAuthConfig:                   cfg.OAuth.Codex,
+		OAuthSessionTTL:               cfg.OAuth.Codex.SessionTTL,
+		OAuthCompletionService:        oauthCompletionService,
+		CompletionService:             completionService, // May be nil if routing disabled
+		CopilotOAuthProvider:          copilotProvider,
+		CopilotOAuthSessionTTL:        cfg.OAuth.Copilot.SessionTTL,
+		CopilotOAuthCompletionService: copilotOAuthCompletionService,
+		UsageCache:                    quotaStateCache, // For usage endpoint
+	})
 
 	httpServer := server.NewHTTPServer(cfg.Server, router)
 	refreshWorker := server.NewRefreshWorker(refreshService, loggerinfra.ForModuleLazy("platform.server.refresh_worker"), cfg.Credential.RefreshInterval)
@@ -241,11 +264,19 @@ func initCompletionService(
 	// Convert provider configs for static registry (fallback configuration)
 	providerConfigs := make(map[string]providerinfra.ProviderConfig)
 	for id, pc := range cfg.Providers {
+		baseURL := pc.BaseURL
+		if id == "copilot" {
+			baseURL = providerinfra.ResolveCopilotBaseURL(
+				cfg.OAuth.Copilot.EnterpriseURL,
+				cfg.OAuth.Copilot.AccountType,
+			)
+		}
+
 		providerConfigs[id] = providerinfra.ProviderConfig{
 			ID:       id,
 			Name:     pc.Name,
 			Enabled:  pc.Enabled,
-			BaseURL:  pc.BaseURL,
+			BaseURL:  baseURL,
 			Models:   pc.Models,
 			Headers:  pc.Headers,
 			AuthType: pc.AuthType,
@@ -276,6 +307,10 @@ func initCompletionService(
 	// Provider client
 	clientConfig := providerinfra.ClientConfig{
 		Timeout: cfg.Routing.RequestTimeout,
+	}
+	// Check if copilot provider has responses routing enabled
+	if copilotCfg, ok := cfg.Providers["copilot"]; ok {
+		clientConfig.EnableCopilotResponsesRouting = copilotCfg.EnableResponsesRouting
 	}
 	clientLogger := loggerinfra.ForModule("infra.provider.client")
 	client := providerinfra.NewClient(clientConfig, clientLogger)

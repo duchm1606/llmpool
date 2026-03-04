@@ -2,6 +2,7 @@ package completion
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	domaincompletion "github.com/duchoang/llmpool/internal/domain/completion"
@@ -60,7 +61,18 @@ func (r *router) RouteWithFallback(
 	model string,
 	excludeProviders []domainprovider.ProviderID,
 ) (*domainprovider.RoutingDecision, error) {
-	// Validate model ID format - reject prefixed models
+	return r.RouteWithHint(ctx, model, "", excludeProviders)
+}
+
+// RouteWithHint routes with an explicit provider hint.
+// If providerHint is non-empty, it forces routing to that provider.
+func (r *router) RouteWithHint(
+	ctx context.Context,
+	model string,
+	providerHint string,
+	excludeProviders []domainprovider.ProviderID,
+) (*domainprovider.RoutingDecision, error) {
+	// Validate model ID format - reject prefixed models (should be parsed by handler)
 	if strings.Contains(model, "/") {
 		return nil, domaincompletion.ErrInvalidModelID(model)
 	}
@@ -75,6 +87,40 @@ func (r *router) RouteWithFallback(
 	excludeSet := make(map[domainprovider.ProviderID]bool)
 	for _, p := range excludeProviders {
 		excludeSet[p] = true
+	}
+
+	// If provider hint is specified, filter to only that provider
+	if providerHint != "" {
+		hintedProviderID := domainprovider.ProviderID(providerHint)
+
+		// Check if the hinted provider supports this model
+		found := false
+		for _, pid := range providers {
+			if pid == hintedProviderID {
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			r.logger.Warn("hinted provider does not support model",
+				zap.String("provider_hint", providerHint),
+				zap.String("model", model),
+			)
+			return nil, domaincompletion.NewAPIError(
+				400,
+				domaincompletion.ErrorTypeInvalidRequest,
+				fmt.Sprintf("provider '%s' does not support model '%s'", providerHint, model),
+			)
+		}
+
+		// Only try the hinted provider
+		providers = []domainprovider.ProviderID{hintedProviderID}
+
+		r.logger.Info("routing with provider hint",
+			zap.String("provider_hint", providerHint),
+			zap.String("model", model),
+		)
 	}
 
 	// TODO: Check per-user mapping if available (feature deferred)
@@ -95,6 +141,18 @@ func (r *router) RouteWithFallback(
 		// Check provider health
 		health := r.healthTracker.GetHealth(providerID)
 		if !health.IsAvailable() {
+			if providerHint != "" {
+				r.logger.Warn("hinted provider unavailable",
+					zap.String("provider_hint", providerHint),
+					zap.String("model", model),
+					zap.Bool("healthy", health.Healthy),
+					zap.Bool("rate_limited", health.RateLimited),
+					zap.Time("rate_limit_reset", health.RateLimitReset),
+					zap.Time("cooldown_until", health.CooldownUntil),
+					zap.Int("consecutive_fails", health.ConsecutiveFails),
+					zap.String("last_error", health.LastError),
+				)
+			}
 			r.logger.Debug("provider unavailable, skipping",
 				zap.String("provider", string(providerID)),
 				zap.Bool("healthy", health.Healthy),
@@ -148,12 +206,20 @@ func (r *router) RouteWithFallback(
 			zap.String("credential_type", credentialMeta.Type),
 			zap.String("credential_account_id", credentialMeta.AccountID),
 			zap.String("base_url", provider.BaseURL),
+			zap.String("provider_hint", providerHint),
 		)
 
 		return decision, nil
 	}
 
 	// No available provider
+	if providerHint != "" {
+		return nil, domaincompletion.NewAPIError(
+			503,
+			domaincompletion.ErrorTypeServiceUnavailable,
+			fmt.Sprintf("hinted provider '%s' is not available for model '%s'", providerHint, model),
+		)
+	}
 	return nil, domaincompletion.ErrNoAvailableProvider(model)
 }
 

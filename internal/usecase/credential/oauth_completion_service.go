@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	domaincredential "github.com/duchoang/llmpool/internal/domain/credential"
 	domainoauth "github.com/duchoang/llmpool/internal/domain/oauth"
+	"github.com/google/uuid"
 )
 
 type oAuthCompletionService struct {
@@ -27,6 +29,12 @@ func NewOAuthCompletionService(repo Repository, encryptor Encryptor) OAuthComple
 
 // CompleteOAuth persists OAuth tokens as an encrypted credential profile
 func (s *oAuthCompletionService) CompleteOAuth(ctx context.Context, accountID string, tokenPayload domainoauth.TokenPayload) (domaincredential.Profile, error) {
+	// Validate accountID - must be non-empty
+	validatedAccountID := strings.TrimSpace(accountID)
+	if validatedAccountID == "" {
+		return domaincredential.Profile{}, fmt.Errorf("invalid oauth credential: account_id is required")
+	}
+
 	// Build credential profile from token payload
 	profileData := map[string]interface{}{
 		"access_token":  tokenPayload.AccessToken,
@@ -46,10 +54,11 @@ func (s *oAuthCompletionService) CompleteOAuth(ctx context.Context, accountID st
 	}
 
 	profile := domaincredential.Profile{
+		ID:               uuid.NewString(),
 		Type:             "codex", // Codex provider type
-		AccountID:        accountID,
+		AccountID:        validatedAccountID,
 		Enabled:          true,
-		Email:            "", // Could be extracted from token if available
+		Email:            strings.TrimSpace(tokenPayload.Email),
 		Expired:          tokenPayload.ExpiresAt,
 		LastRefreshAt:    s.now(),
 		EncryptedProfile: encProfile,

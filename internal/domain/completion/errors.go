@@ -62,7 +62,7 @@ func ErrInvalidModelID(model string) *APIError {
 	return NewAPIError(
 		http.StatusBadRequest,
 		ErrorTypeInvalidRequest,
-		fmt.Sprintf("Invalid model ID '%s'. Model IDs must not contain '/' prefix.", model),
+		fmt.Sprintf("Invalid model ID '%s'. Provider prefixes must use known providers (codex, copilot, openai, anthropic).", model),
 	)
 }
 

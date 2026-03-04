@@ -99,6 +99,16 @@ type Router interface {
 		model string,
 		excludeProviders []domainprovider.ProviderID,
 	) (*domainprovider.RoutingDecision, error)
+
+	// RouteWithHint routes with an explicit provider hint.
+	// If providerHint is non-empty, it forces routing to that provider (if available).
+	// If the hinted provider doesn't support the model or is unavailable, returns an error.
+	RouteWithHint(
+		ctx context.Context,
+		model string,
+		providerHint string,
+		excludeProviders []domainprovider.ProviderID,
+	) (*domainprovider.RoutingDecision, error)
 }
 
 // CompletionService orchestrates completion requests.

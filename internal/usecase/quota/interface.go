@@ -52,6 +52,21 @@ type StateCache interface {
 
 	// CountCredentialStates returns count of cached states.
 	CountCredentialStates(ctx context.Context) (int64, error)
+
+	// GetCopilotUsage retrieves cached Copilot usage for a credential.
+	GetCopilotUsage(ctx context.Context, credentialID string) (*domainquota.CopilotUsage, error)
+
+	// SetCopilotUsage stores Copilot usage with TTL.
+	SetCopilotUsage(ctx context.Context, usage domainquota.CopilotUsage, ttl time.Duration) error
+
+	// ListCopilotUsages retrieves all cached Copilot usages.
+	ListCopilotUsages(ctx context.Context) ([]domainquota.CopilotUsage, error)
+}
+
+// CopilotUsageFetcher fetches Copilot usage from GitHub API.
+type CopilotUsageFetcher interface {
+	// FetchUsage fetches the full Copilot usage information for a credential.
+	FetchUsage(ctx context.Context, credentialID, accessToken string) (*domainquota.CopilotUsage, error)
 }
 
 // LivenessService defines the liveness checking operations.

@@ -199,3 +199,72 @@ func TestOAuthCompletionService_CompleteOAuth_ReauthIdempotency(t *testing.T) {
 	mockEnc.AssertExpectations(t)
 	mockRepo.AssertExpectations(t)
 }
+
+func TestOAuthCompletionService_CompleteOAuth_EmptyAccountID(t *testing.T) {
+	mockRepo := new(mockRepository)
+	mockEnc := new(mockEncryptor)
+	service := NewOAuthCompletionService(mockRepo, mockEnc)
+
+	tokenPayload := domainoauth.TokenPayload{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		ExpiresAt:    time.Now().Add(time.Hour),
+	}
+
+	// Empty account ID should fail validation
+	_, err := service.CompleteOAuth(context.Background(), "", tokenPayload)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "account_id is required")
+	mockEnc.AssertNotCalled(t, "Encrypt")
+	mockRepo.AssertNotCalled(t, "UpsertByTypeAccount")
+}
+
+func TestOAuthCompletionService_CompleteOAuth_WhitespaceAccountID(t *testing.T) {
+	mockRepo := new(mockRepository)
+	mockEnc := new(mockEncryptor)
+	service := NewOAuthCompletionService(mockRepo, mockEnc)
+
+	tokenPayload := domainoauth.TokenPayload{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		ExpiresAt:    time.Now().Add(time.Hour),
+	}
+
+	// Whitespace-only account ID should fail validation
+	_, err := service.CompleteOAuth(context.Background(), "   ", tokenPayload)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "account_id is required")
+	mockEnc.AssertNotCalled(t, "Encrypt")
+	mockRepo.AssertNotCalled(t, "UpsertByTypeAccount")
+}
+
+func TestOAuthCompletionService_CompleteOAuth_GeneratesUUID(t *testing.T) {
+	mockRepo := new(mockRepository)
+	mockEnc := new(mockEncryptor)
+	service := NewOAuthCompletionService(mockRepo, mockEnc)
+
+	tokenPayload := domainoauth.TokenPayload{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		ExpiresAt:    time.Now().Add(time.Hour),
+	}
+
+	mockEnc.On("Encrypt", mock.Anything).Return("encrypted", nil)
+
+	var capturedID string
+	mockRepo.On("UpsertByTypeAccount", mock.Anything, mock.MatchedBy(func(p domaincredential.Profile) bool {
+		capturedID = p.ID
+		// ID should be a non-empty UUID
+		return p.ID != "" && len(p.ID) == 36 // UUID format: 8-4-4-4-12 = 36 chars
+	})).Return(domaincredential.Profile{ID: "test-uuid"}, nil)
+
+	_, err := service.CompleteOAuth(context.Background(), "testuser", tokenPayload)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, capturedID)
+	assert.Len(t, capturedID, 36) // UUID format
+	mockEnc.AssertExpectations(t)
+	mockRepo.AssertExpectations(t)
+}

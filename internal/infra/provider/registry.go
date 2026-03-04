@@ -2,6 +2,7 @@
 package provider
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -56,11 +57,16 @@ func NewRegistry(config RegistryConfig) usecasecompletion.ProviderRegistry {
 
 	// Register providers
 	for _, pc := range config.Providers {
+		baseURL := pc.BaseURL
+		if pc.ID == "copilot" && strings.TrimSpace(baseURL) == "" {
+			baseURL = CopilotBaseURLForAccountType("individual")
+		}
+
 		provider := &domainprovider.Provider{
 			ID:       domainprovider.ProviderID(pc.ID),
 			Name:     pc.Name,
 			Enabled:  pc.Enabled,
-			BaseURL:  pc.BaseURL,
+			BaseURL:  baseURL,
 			Models:   pc.Models,
 			Headers:  pc.Headers,
 			AuthType: domainprovider.AuthType(pc.AuthType),

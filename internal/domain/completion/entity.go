@@ -24,6 +24,11 @@ type ChatCompletionRequest struct {
 	Functions      []Function      `json:"functions,omitempty"`   // Deprecated but still used
 	FunctionCall   any             `json:"function_call,omitempty"`
 	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
+
+	// ProviderHint is an internal field (not from JSON) that forces routing to a specific provider.
+	// Set via X-Provider header or provider prefix in model name (e.g., "copilot/gpt-5").
+	// This field is populated by the handler before passing to the service.
+	ProviderHint string `json:"-"`
 }
 
 // Message represents a chat message.

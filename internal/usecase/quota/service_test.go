@@ -77,18 +77,20 @@ func (m *mockProviderChecker) Check(ctx context.Context, credentialType, accessT
 }
 
 type mockStateCache struct {
-	mu          sync.RWMutex
-	states      map[string]*domainquota.CredentialState
-	modelStates map[string]*domainquota.ModelState
-	pingErr     error
-	setErr      error
-	stateCount  int64
+	mu            sync.RWMutex
+	states        map[string]*domainquota.CredentialState
+	modelStates   map[string]*domainquota.ModelState
+	copilotUsages map[string]*domainquota.CopilotUsage
+	pingErr       error
+	setErr        error
+	stateCount    int64
 }
 
 func newMockStateCache() *mockStateCache {
 	return &mockStateCache{
-		states:      make(map[string]*domainquota.CredentialState),
-		modelStates: make(map[string]*domainquota.ModelState),
+		states:        make(map[string]*domainquota.CredentialState),
+		modelStates:   make(map[string]*domainquota.ModelState),
+		copilotUsages: make(map[string]*domainquota.CopilotUsage),
 	}
 }
 
@@ -155,6 +157,36 @@ func (m *mockStateCache) CountCredentialStates(ctx context.Context) (int64, erro
 		return 0, m.pingErr
 	}
 	return m.stateCount, nil
+}
+
+func (m *mockStateCache) GetCopilotUsage(ctx context.Context, credentialID string) (*domainquota.CopilotUsage, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	usage, ok := m.copilotUsages[credentialID]
+	if !ok {
+		return nil, nil
+	}
+	return usage, nil
+}
+
+func (m *mockStateCache) SetCopilotUsage(ctx context.Context, usage domainquota.CopilotUsage, ttl time.Duration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.setErr != nil {
+		return m.setErr
+	}
+	m.copilotUsages[usage.CredentialID] = &usage
+	return nil
+}
+
+func (m *mockStateCache) ListCopilotUsages(ctx context.Context) ([]domainquota.CopilotUsage, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make([]domainquota.CopilotUsage, 0, len(m.copilotUsages))
+	for _, v := range m.copilotUsages {
+		result = append(result, *v)
+	}
+	return result, nil
 }
 
 func TestService_CheckSample(t *testing.T) {

@@ -7,10 +7,15 @@ import (
 	"net/http"
 
 	domaincompletion "github.com/duchoang/llmpool/internal/domain/completion"
+	"github.com/duchoang/llmpool/internal/infra/provider"
 	usecasecompletion "github.com/duchoang/llmpool/internal/usecase/completion"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
+
+// ProviderHeader is the HTTP header used to force routing to a specific provider.
+// Example: X-Provider: copilot
+const ProviderHeader = "X-Provider"
 
 // ChatHandler handles chat completion requests.
 type ChatHandler struct {
@@ -42,8 +47,12 @@ func (h *ChatHandler) ChatCompletion(c *gin.Context) {
 		return
 	}
 
+	// Extract provider hint from header or model prefix
+	req.ProviderHint = h.extractProviderHint(c, &req)
+
 	h.logger.Debug("chat completion request",
 		zap.String("model", req.Model),
+		zap.String("provider_hint", req.ProviderHint),
 		zap.Bool("stream", req.Stream),
 		zap.Int("messages", len(req.Messages)),
 	)
@@ -55,6 +64,33 @@ func (h *ChatHandler) ChatCompletion(c *gin.Context) {
 	}
 
 	h.handleNonStreaming(c, req)
+}
+
+// extractProviderHint extracts the provider hint from header or model prefix.
+// Priority: X-Provider header > model prefix (e.g., "copilot/gpt-5")
+func (h *ChatHandler) extractProviderHint(c *gin.Context, req *domaincompletion.ChatCompletionRequest) string {
+	// Check X-Provider header first (highest priority)
+	if headerProvider := c.GetHeader(ProviderHeader); headerProvider != "" {
+		h.logger.Debug("provider hint from header",
+			zap.String("provider", headerProvider),
+		)
+		return headerProvider
+	}
+
+	// Check for provider prefix in model name (e.g., "copilot/gpt-5")
+	parsed := provider.ParseModelWithProvider(req.Model)
+	if parsed.Provider != "" {
+		h.logger.Debug("provider hint from model prefix",
+			zap.String("original_model", req.Model),
+			zap.String("provider", parsed.Provider),
+			zap.String("model", parsed.Model),
+		)
+		// Update the model in request to the unprefixed version
+		req.Model = parsed.Model
+		return parsed.Provider
+	}
+
+	return ""
 }
 
 // handleNonStreaming handles non-streaming chat completion.

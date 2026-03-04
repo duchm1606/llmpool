@@ -41,12 +41,13 @@ func DefaultServiceConfig() ServiceConfig {
 
 // Service implements LivenessService.
 type Service struct {
-	repo      CredentialRepository
-	encryptor Encryptor
-	checker   ProviderChecker
-	cache     StateCache
-	logger    *zap.Logger
-	cfg       ServiceConfig
+	repo                CredentialRepository
+	encryptor           Encryptor
+	checker             ProviderChecker
+	cache               StateCache
+	logger              *zap.Logger
+	cfg                 ServiceConfig
+	copilotUsageFetcher CopilotUsageFetcher // Optional: for fetching full copilot usage
 }
 
 type authPayload struct {
@@ -71,6 +72,11 @@ func NewService(
 		logger:    logger,
 		cfg:       cfg,
 	}
+}
+
+// SetCopilotUsageFetcher sets the optional copilot usage fetcher.
+func (s *Service) SetCopilotUsageFetcher(fetcher CopilotUsageFetcher) {
+	s.copilotUsageFetcher = fetcher
 }
 
 // CheckSample performs a sample-based liveness check (20% of credentials).
@@ -309,6 +315,11 @@ func (s *Service) checkSingleProfile(ctx context.Context, profile domaincredenti
 		}
 	}
 
+	// Fetch and cache full Copilot usage for copilot credentials
+	if profile.Type == "copilot" && s.copilotUsageFetcher != nil && result.Healthy {
+		s.fetchAndCacheCopilotUsage(ctx, profile.ID, payload.AccessToken)
+	}
+
 	return nil
 }
 
@@ -462,4 +473,28 @@ func isNetworkError(err error) bool {
 	return false
 }
 
-// containsSubstring is no longer needed - removed
+// fetchAndCacheCopilotUsage fetches full Copilot usage and caches it.
+func (s *Service) fetchAndCacheCopilotUsage(ctx context.Context, credentialID, accessToken string) {
+	usage, err := s.copilotUsageFetcher.FetchUsage(ctx, credentialID, accessToken)
+	if err != nil {
+		s.logger.Warn("failed to fetch copilot usage",
+			zap.String("credential_id", credentialID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	if err := s.cache.SetCopilotUsage(ctx, *usage, s.cfg.StateTTL); err != nil {
+		s.logger.Warn("failed to cache copilot usage",
+			zap.String("credential_id", credentialID),
+			zap.Error(err),
+		)
+	} else {
+		s.logger.Debug("cached copilot usage",
+			zap.String("credential_id", credentialID),
+			zap.String("login", usage.Login),
+			zap.String("copilot_plan", usage.CopilotPlan),
+			zap.String("quota_reset_date", usage.QuotaResetDate),
+		)
+	}
+}
