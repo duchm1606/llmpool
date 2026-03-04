@@ -16,11 +16,13 @@ import (
 	loggerinfra "github.com/duchoang/llmpool/internal/infra/logger"
 	oauthinfra "github.com/duchoang/llmpool/internal/infra/oauth"
 	postgresinfra "github.com/duchoang/llmpool/internal/infra/postgres"
+	providerinfra "github.com/duchoang/llmpool/internal/infra/provider"
 	quotainfra "github.com/duchoang/llmpool/internal/infra/quota"
 	redisinfra "github.com/duchoang/llmpool/internal/infra/redis"
 	refreshinfra "github.com/duchoang/llmpool/internal/infra/refresh"
 	securityinfra "github.com/duchoang/llmpool/internal/infra/security"
 	"github.com/duchoang/llmpool/internal/platform/server"
+	usecasecompletion "github.com/duchoang/llmpool/internal/usecase/completion"
 	usecasecredential "github.com/duchoang/llmpool/internal/usecase/credential"
 	usecasehealth "github.com/duchoang/llmpool/internal/usecase/health"
 	usecasequota "github.com/duchoang/llmpool/internal/usecase/quota"
@@ -144,6 +146,16 @@ func main() {
 		quotaWorkerCfg,
 	)
 
+	// Initialize completion service if routing is enabled
+	var completionService usecasecompletion.CompletionService
+	if cfg.Routing.Enabled {
+		completionService = initCompletionService(cfg, profileRepo, encryptor, log)
+		log.Info("completion routing enabled",
+			zap.Strings("provider_priority", cfg.Routing.ProviderPriority),
+			zap.Int("max_fallback_attempts", cfg.Routing.Fallback.MaxAttempts),
+		)
+	}
+
 	router := deliveryhttp.NewRouter(
 		cfg.Log.Development,
 		healthService,
@@ -154,6 +166,7 @@ func main() {
 		cfg.OAuth.Codex,
 		cfg.OAuth.Codex.SessionTTL,
 		oauthCompletionService,
+		completionService, // May be nil if routing disabled
 	)
 
 	httpServer := server.NewHTTPServer(cfg.Server, router)
@@ -198,4 +211,86 @@ func main() {
 	}
 
 	log.Info("server shutdown complete")
+}
+
+// initCompletionService initializes the completion routing service.
+func initCompletionService(
+	cfg *configinfra.Config,
+	credRepo providerinfra.CredentialRepository,
+	decryptor providerinfra.CredentialDecryptor,
+	log *loggerinfra.Logger,
+) usecasecompletion.CompletionService {
+	// Create pooled token fetcher for credential selection
+	tokenFetcherLogger := loggerinfra.ForModule("infra.provider.token_fetcher")
+	tokenFetcherConfig := providerinfra.PooledTokenFetcherConfig{
+		OnSelection: func(selection providerinfra.CredentialSelection) {
+			// Additional logging callback if needed
+			log.Debug("credential selection callback",
+				zap.String("profile_id", selection.ProfileID),
+				zap.String("account_id", selection.AccountID),
+				zap.String("profile_type", selection.ProfileType),
+			)
+		},
+	}
+	tokenFetcher := providerinfra.NewPooledTokenFetcher(credRepo, decryptor, tokenFetcherLogger, tokenFetcherConfig)
+
+	// Create credential provider using pooled token fetcher
+	credProviderLogger := loggerinfra.ForModule("infra.provider.credential")
+	credProvider := providerinfra.NewCredentialProvider(tokenFetcher, credProviderLogger)
+
+	// Convert provider configs for static registry (fallback configuration)
+	providerConfigs := make(map[string]providerinfra.ProviderConfig)
+	for id, pc := range cfg.Providers {
+		providerConfigs[id] = providerinfra.ProviderConfig{
+			ID:       id,
+			Name:     pc.Name,
+			Enabled:  pc.Enabled,
+			BaseURL:  pc.BaseURL,
+			Models:   pc.Models,
+			Headers:  pc.Headers,
+			AuthType: pc.AuthType,
+			Timeout:  pc.Timeout,
+		}
+	}
+
+	// Create dynamic registry that loads models based on available credentials
+	dynamicRegistryConfig := providerinfra.DynamicRegistryConfig{
+		ProviderPriority: cfg.Routing.ProviderPriority,
+		ProviderConfigs:  providerConfigs,
+	}
+	registryLogger := loggerinfra.ForModule("infra.provider.registry")
+	registry := providerinfra.NewDynamicRegistry(dynamicRegistryConfig, tokenFetcher, registryLogger)
+
+	// Health tracker
+	healthTrackerConfig := providerinfra.HealthTrackerConfig{
+		FailureThreshold:         cfg.Routing.Health.FailureThreshold,
+		CooldownDuration:         cfg.Routing.Health.CooldownDuration,
+		RateLimitDefaultCooldown: cfg.Routing.Health.RateLimitDefaultCooldown,
+	}
+	healthTracker := providerinfra.NewHealthTracker(healthTrackerConfig)
+
+	// Router
+	routerLogger := loggerinfra.ForModule("usecase.completion.router")
+	router := usecasecompletion.NewRouter(registry, healthTracker, credProvider, nil, routerLogger)
+
+	// Provider client
+	clientConfig := providerinfra.ClientConfig{
+		Timeout: cfg.Routing.RequestTimeout,
+	}
+	clientLogger := loggerinfra.ForModule("infra.provider.client")
+	client := providerinfra.NewClient(clientConfig, clientLogger)
+
+	// Service
+	serviceConfig := usecasecompletion.ServiceConfig{
+		MaxFallbackAttempts: cfg.Routing.Fallback.MaxAttempts,
+		RequestTimeout:      cfg.Routing.RequestTimeout,
+	}
+	serviceLogger := loggerinfra.ForModule("usecase.completion.service")
+	completionSvc := usecasecompletion.NewService(router, registry, healthTracker, client, serviceConfig, serviceLogger)
+
+	log.Info("completion service initialized with credential pool",
+		zap.Strings("provider_priority", cfg.Routing.ProviderPriority),
+	)
+
+	return completionSvc
 }

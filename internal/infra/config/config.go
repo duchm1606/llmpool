@@ -11,16 +11,18 @@ import (
 )
 
 type Config struct {
-	App          AppConfig          `mapstructure:"app"`
-	Server       ServerConfig       `mapstructure:"server"`
-	Log          LogConfig          `mapstructure:"log"`
-	Postgres     PostgresConfig     `mapstructure:"postgres"`
-	Redis        RedisConfig        `mapstructure:"redis"`
-	Orchestrator OrchestratorConfig `mapstructure:"orchestrator"`
-	Security     SecurityConfig     `mapstructure:"security"`
-	Credential   CredentialConfig   `mapstructure:"credential"`
-	OAuth        OAuthConfig        `mapstructure:"oauth"`
-	Liveness     LivenessConfig     `mapstructure:"liveness"`
+	App          AppConfig                 `mapstructure:"app"`
+	Server       ServerConfig              `mapstructure:"server"`
+	Log          LogConfig                 `mapstructure:"log"`
+	Postgres     PostgresConfig            `mapstructure:"postgres"`
+	Redis        RedisConfig               `mapstructure:"redis"`
+	Orchestrator OrchestratorConfig        `mapstructure:"orchestrator"`
+	Security     SecurityConfig            `mapstructure:"security"`
+	Credential   CredentialConfig          `mapstructure:"credential"`
+	OAuth        OAuthConfig               `mapstructure:"oauth"`
+	Liveness     LivenessConfig            `mapstructure:"liveness"`
+	Routing      RoutingConfig             `mapstructure:"routing"`
+	Providers    map[string]ProviderConfig `mapstructure:"providers"`
 }
 
 type AppConfig struct {
@@ -92,6 +94,39 @@ type LivenessConfig struct {
 	NetworkMaxRetries    int           `mapstructure:"network_max_retries"`
 	CodexUsageURL        string        `mapstructure:"codex_usage_url"`
 	CheckTimeout         time.Duration `mapstructure:"check_timeout"`
+}
+
+// RoutingConfig holds configuration for the completion API routing.
+type RoutingConfig struct {
+	Enabled          bool           `mapstructure:"enabled"`
+	ProviderPriority []string       `mapstructure:"provider_priority"`
+	Fallback         FallbackConfig `mapstructure:"fallback"`
+	RequestTimeout   time.Duration  `mapstructure:"request_timeout"`
+	Health           HealthConfig   `mapstructure:"health"`
+}
+
+// FallbackConfig configures fallback behavior.
+type FallbackConfig struct {
+	Enabled     bool `mapstructure:"enabled"`
+	MaxAttempts int  `mapstructure:"max_attempts"`
+}
+
+// HealthConfig configures health tracking.
+type HealthConfig struct {
+	FailureThreshold         int           `mapstructure:"failure_threshold"`
+	CooldownDuration         time.Duration `mapstructure:"cooldown_duration"`
+	RateLimitDefaultCooldown time.Duration `mapstructure:"rate_limit_default_cooldown"`
+}
+
+// ProviderConfig holds configuration for a single LLM provider.
+type ProviderConfig struct {
+	Enabled  bool              `mapstructure:"enabled"`
+	Name     string            `mapstructure:"name"`
+	BaseURL  string            `mapstructure:"base_url"`
+	AuthType string            `mapstructure:"auth_type"`
+	Timeout  time.Duration     `mapstructure:"timeout"`
+	Models   []string          `mapstructure:"models"`
+	Headers  map[string]string `mapstructure:"headers"`
 }
 
 func Load() (*Config, error) {
@@ -259,4 +294,14 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("liveness.network_max_retries", 3)
 	v.SetDefault("liveness.codex_usage_url", "https://chatgpt.com/backend-api/wham/usage")
 	v.SetDefault("liveness.check_timeout", "10s")
+
+	// Routing defaults
+	v.SetDefault("routing.enabled", true)
+	v.SetDefault("routing.provider_priority", []string{"codex", "copilot", "openai", "anthropic"})
+	v.SetDefault("routing.fallback.enabled", true)
+	v.SetDefault("routing.fallback.max_attempts", 3)
+	v.SetDefault("routing.request_timeout", "120s")
+	v.SetDefault("routing.health.failure_threshold", 3)
+	v.SetDefault("routing.health.cooldown_duration", "30s")
+	v.SetDefault("routing.health.rate_limit_default_cooldown", "60s")
 }

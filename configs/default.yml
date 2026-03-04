@@ -52,3 +52,61 @@ liveness:
   network_max_retries: 3
   codex_usage_url: https://chatgpt.com/backend-api/wham/usage
   check_timeout: 10s
+
+# Routing configuration for OpenAI-compatible API proxy
+routing:
+  enabled: true
+  # Provider priority order (first = highest priority)
+  provider_priority:
+    - codex
+    - copilot
+    - openai
+    - anthropic
+  # Fallback behavior
+  fallback:
+    enabled: true
+    max_attempts: 3
+  # Request timeout for upstream providers
+  request_timeout: 120s
+  # Health tracker settings
+  health:
+    failure_threshold: 3
+    cooldown_duration: 30s
+    rate_limit_default_cooldown: 60s
+
+# Provider configurations
+# Note: Models are now loaded dynamically from internal/infra/provider/models.go
+# based on which credential types have enabled credentials in the database.
+# The models listed here serve as documentation only - actual model availability
+# is determined by the ProviderModels map in models.go
+providers:
+  codex:
+    enabled: true
+    name: "OpenAI Codex"
+    base_url: "https://chatgpt.com/backend-api/codex"
+    auth_type: bearer_pool
+    timeout: 120s
+    # Models are loaded dynamically - see internal/infra/provider/models.go
+    # Supported: gpt-5, gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-4, gpt-3.5-turbo, o1, o1-preview, o1-mini, o3, o3-mini
+    models: []
+  copilot:
+    enabled: false
+    name: "GitHub Copilot"
+    base_url: "https://api.githubcopilot.com"
+    auth_type: bearer_pool
+    timeout: 120s
+    models: []
+  openai:
+    enabled: false
+    name: "OpenAI Direct"
+    base_url: "https://api.openai.com"
+    auth_type: api_key
+    timeout: 120s
+    models: []
+  anthropic:
+    enabled: false
+    name: "Anthropic"
+    base_url: "https://api.anthropic.com"
+    auth_type: api_key
+    timeout: 120s
+    models: []

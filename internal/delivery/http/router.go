@@ -7,6 +7,7 @@ import (
 	"github.com/duchoang/llmpool/internal/delivery/http/middleware"
 	configinfra "github.com/duchoang/llmpool/internal/infra/config"
 	loggerinfra "github.com/duchoang/llmpool/internal/infra/logger"
+	usecasecompletion "github.com/duchoang/llmpool/internal/usecase/completion"
 	usecasecredential "github.com/duchoang/llmpool/internal/usecase/credential"
 	usecasehealth "github.com/duchoang/llmpool/internal/usecase/health"
 	usecaseoauth "github.com/duchoang/llmpool/internal/usecase/oauth"
@@ -23,6 +24,7 @@ func NewRouter(
 	oauthConfig configinfra.CodexOAuthConfig,
 	oauthSessionTTL time.Duration,
 	oauthCompletionService usecasecredential.OAuthCompletionService,
+	completionService usecasecompletion.CompletionService, // Optional: may be nil
 ) *gin.Engine {
 	if development {
 		gin.SetMode(gin.DebugMode)
@@ -72,6 +74,27 @@ func NewRouter(
 	// Compatibility aliases for device flow
 	r.POST("/v0/management/codex-device-code", oauthHandler.StartDeviceFlow)
 	r.GET("/v0/management/codex-device-status", oauthHandler.GetDeviceStatus)
+
+	// OpenAI-compatible completion API routes
+	if completionService != nil {
+		completionLogger := loggerinfra.ForModule("delivery.http.handler.completion")
+		chatHandler := handler.NewChatHandler(completionService, completionLogger)
+		modelsHandler := handler.NewModelsHandler(completionService, completionLogger)
+		responsesHandler := handler.NewResponsesHandler(completionService, completionLogger)
+
+		// Chat completions (primary endpoint)
+		r.POST("/v1/chat/completions", chatHandler.ChatCompletion)
+
+		// Legacy text completions (for compatibility)
+		r.POST("/v1/completions", chatHandler.Completion)
+
+		// OpenAI Responses API (used by Cursor IDE)
+		r.POST("/v1/responses", responsesHandler.CreateResponse)
+
+		// Models endpoints
+		r.GET("/v1/models", modelsHandler.ListModels)
+		r.GET("/v1/models/:model", modelsHandler.GetModel)
+	}
 
 	return r
 }
