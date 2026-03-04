@@ -10,17 +10,20 @@ import (
 	"time"
 
 	deliveryhttp "github.com/duchoang/llmpool/internal/delivery/http"
+	domainquota "github.com/duchoang/llmpool/internal/domain/quota"
 	configinfra "github.com/duchoang/llmpool/internal/infra/config"
 	credentialrepo "github.com/duchoang/llmpool/internal/infra/credential"
 	loggerinfra "github.com/duchoang/llmpool/internal/infra/logger"
 	oauthinfra "github.com/duchoang/llmpool/internal/infra/oauth"
 	postgresinfra "github.com/duchoang/llmpool/internal/infra/postgres"
+	quotainfra "github.com/duchoang/llmpool/internal/infra/quota"
 	redisinfra "github.com/duchoang/llmpool/internal/infra/redis"
 	refreshinfra "github.com/duchoang/llmpool/internal/infra/refresh"
 	securityinfra "github.com/duchoang/llmpool/internal/infra/security"
 	"github.com/duchoang/llmpool/internal/platform/server"
 	usecasecredential "github.com/duchoang/llmpool/internal/usecase/credential"
 	usecasehealth "github.com/duchoang/llmpool/internal/usecase/health"
+	usecasequota "github.com/duchoang/llmpool/internal/usecase/quota"
 	"go.uber.org/zap"
 )
 
@@ -94,6 +97,53 @@ func main() {
 
 	refreshService := usecasecredential.NewRefreshService(profileRepo, refreshers, encryptor)
 
+	// Initialize liveness checker with provider-specific routing
+	quotaStateCache := quotainfra.NewRedisStateCache(redisClient)
+
+	// Create Codex checker for codex/openai credentials using config
+	codexCheckerCfg := quotainfra.CodexCheckerConfig{
+		UsageURL: cfg.Liveness.CodexUsageURL,
+		Timeout:  cfg.Liveness.CheckTimeout,
+	}
+	codexChecker := quotainfra.NewCodexChecker(codexCheckerCfg)
+	noopChecker := quotainfra.NewNoopChecker()
+
+	// Route codex and openai to Codex checker, others use noop
+	quotaCheckers := map[string]quotainfra.ProviderChecker{
+		"codex":  codexChecker,
+		"openai": codexChecker,
+	}
+	quotaChecker := quotainfra.NewCheckerRouter(quotaCheckers, noopChecker)
+	quotaServiceCfg := usecasequota.ServiceConfig{
+		SamplePercent: cfg.Liveness.SamplePercent,
+		StateTTL:      cfg.Liveness.StateTTL,
+		Cooldown: domainquota.CooldownConfig{
+			AuthFailureCooldown:  cfg.Liveness.AuthFailureCooldown,
+			RateLimitInitial:     cfg.Liveness.RateLimitInitial,
+			RateLimitMaxCooldown: cfg.Liveness.RateLimitMaxCooldown,
+			NetworkErrorCooldown: cfg.Liveness.NetworkErrorCooldown,
+			NetworkMaxRetries:    cfg.Liveness.NetworkMaxRetries,
+		},
+	}
+	quotaService := usecasequota.NewService(
+		profileRepo,
+		encryptor,
+		quotaChecker,
+		quotaStateCache,
+		loggerinfra.ForModule("usecase.quota"),
+		quotaServiceCfg,
+	)
+
+	quotaWorkerCfg := server.QuotaWorkerConfig{
+		SampleInterval:    cfg.Liveness.SampleInterval,
+		FullSweepInterval: cfg.Liveness.FullSweepInterval,
+	}
+	quotaWorker := server.NewQuotaWorker(
+		quotaService,
+		loggerinfra.ForModule("platform.server.quota_worker"),
+		quotaWorkerCfg,
+	)
+
 	router := deliveryhttp.NewRouter(
 		cfg.Log.Development,
 		healthService,
@@ -113,6 +163,15 @@ func main() {
 	defer stop()
 
 	go refreshWorker.Start(shutdownCtx)
+
+	// Start quota worker if liveness checking is enabled
+	if cfg.Liveness.Enabled {
+		go quotaWorker.Start(shutdownCtx)
+		log.Info("quota worker started",
+			zap.Duration("sample_interval", cfg.Liveness.SampleInterval),
+			zap.Duration("full_sweep_interval", cfg.Liveness.FullSweepInterval),
+		)
+	}
 
 	go func() {
 		log.Info("starting API server",

@@ -22,6 +22,15 @@ func NewImportService(repo Repository, encryptor Encryptor) ImportService {
 }
 
 func (s *importService) Import(ctx context.Context, profileInput CredentialProfile) (domaincredential.Profile, error) {
+	profileType := strings.TrimSpace(profileInput.Type)
+	accountID := strings.TrimSpace(profileInput.AccountID)
+	if profileType == "" {
+		return domaincredential.Profile{}, fmt.Errorf("type is required")
+	}
+	if accountID == "" {
+		return domaincredential.Profile{}, fmt.Errorf("account_id is required")
+	}
+
 	rawProfile, err := json.Marshal(profileInput)
 	if err != nil {
 		return domaincredential.Profile{}, fmt.Errorf("marshal credential profile: %w", err)
@@ -39,8 +48,8 @@ func (s *importService) Import(ctx context.Context, profileInput CredentialProfi
 
 	profile := domaincredential.Profile{
 		ID:               uuid.NewString(),
-		Type:             strings.TrimSpace(profileInput.Type),
-		AccountID:        strings.TrimSpace(profileInput.AccountID),
+		Type:             profileType,
+		AccountID:        accountID,
 		Enabled:          enabled,
 		Email:            strings.TrimSpace(profileInput.Email),
 		Expired:          profileInput.Expired,
@@ -48,5 +57,5 @@ func (s *importService) Import(ctx context.Context, profileInput CredentialProfi
 		EncryptedProfile: encProfile,
 	}
 
-	return s.repo.Save(ctx, profile)
+	return s.repo.UpsertByTypeAccount(ctx, profile)
 }

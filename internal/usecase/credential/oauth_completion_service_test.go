@@ -37,6 +37,21 @@ func (m *mockRepository) UpsertByTypeAccount(ctx context.Context, profile domain
 	return args.Get(0).(domaincredential.Profile), args.Error(1)
 }
 
+func (m *mockRepository) ListEnabled(ctx context.Context) ([]domaincredential.Profile, error) {
+	args := m.Called(ctx)
+	return args.Get(0).([]domaincredential.Profile), args.Error(1)
+}
+
+func (m *mockRepository) CountEnabled(ctx context.Context) (int64, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *mockRepository) RandomSample(ctx context.Context, sampleSize int, seed int64) ([]domaincredential.Profile, error) {
+	args := m.Called(ctx, sampleSize, seed)
+	return args.Get(0).([]domaincredential.Profile), args.Error(1)
+}
+
 type mockEncryptor struct {
 	mock.Mock
 }

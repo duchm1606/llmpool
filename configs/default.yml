@@ -10,7 +10,7 @@ server:
   idle_timeout: 30s
 
 log:
-  level: info
+  level: debug
   format: text
   development: true
 
@@ -38,3 +38,17 @@ oauth:
     poll_url: https://auth.openai.com/device/poll
     timeout: 30s
     session_ttl: 600s
+
+liveness:
+  enabled: true
+  sample_interval: 5m
+  full_sweep_interval: 60m
+  sample_percent: 0.20
+  state_ttl: 2h
+  auth_failure_cooldown: 30m
+  rate_limit_initial: 2m
+  rate_limit_max_cooldown: 30m
+  network_error_cooldown: 5m
+  network_max_retries: 3
+  codex_usage_url: https://chatgpt.com/backend-api/wham/usage
+  check_timeout: 10s

@@ -71,6 +71,7 @@ func (r *PostgresRepository) Update(ctx context.Context, profile domaincredentia
 
 func (r *PostgresRepository) UpsertByTypeAccount(ctx context.Context, profile domaincredential.Profile) (domaincredential.Profile, error) {
 	row, err := r.queries.UpsertCredentialProfileByTypeAccount(ctx, sqlcdb.UpsertCredentialProfileByTypeAccountParams{
+		ID:               profile.ID,
 		Type:             profile.Type,
 		AccountID:        profile.AccountID,
 		Enabled:          profile.Enabled,
@@ -84,6 +85,57 @@ func (r *PostgresRepository) UpsertByTypeAccount(ctx context.Context, profile do
 	}
 
 	return toDomainProfile(row), nil
+}
+
+func (r *PostgresRepository) ListEnabled(ctx context.Context) ([]domaincredential.Profile, error) {
+	rows, err := r.queries.ListEnabledCredentialProfiles(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list enabled credential profiles: %w", err)
+	}
+
+	out := make([]domaincredential.Profile, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, toDomainProfile(row))
+	}
+
+	return out, nil
+}
+
+func (r *PostgresRepository) CountEnabled(ctx context.Context) (int64, error) {
+	count, err := r.queries.CountEnabledCredentialProfiles(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("count enabled credential profiles: %w", err)
+	}
+
+	return count, nil
+}
+
+func (r *PostgresRepository) RandomSample(ctx context.Context, sampleSize int, seed int64) ([]domaincredential.Profile, error) {
+	// Bound sampleSize to valid int32 range for DB query
+	var limit int32
+	switch {
+	case sampleSize < 0:
+		limit = 0
+	case sampleSize > 2147483647: // math.MaxInt32
+		limit = 2147483647
+	default:
+		limit = int32(sampleSize) //nolint:gosec // bounds checked above
+	}
+
+	rows, err := r.queries.RandomSampleEnabledCredentialProfiles(ctx, sqlcdb.RandomSampleEnabledCredentialProfilesParams{
+		Limit:   limit,
+		Column2: fmt.Sprintf("%d", seed),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("random sample enabled credential profiles: %w", err)
+	}
+
+	out := make([]domaincredential.Profile, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, toDomainProfile(row))
+	}
+
+	return out, nil
 }
 
 func toDomainProfile(row sqlcdb.CredentialProfile) domaincredential.Profile {

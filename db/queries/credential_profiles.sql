@@ -76,6 +76,7 @@ RETURNING
 
 -- name: UpsertCredentialProfileByTypeAccount :one
 INSERT INTO credential_profiles (
+    id,
     type,
     account_id,
     enabled,
@@ -93,10 +94,11 @@ INSERT INTO credential_profiles (
     $5,
     $6,
     $7,
+    $8,
     NOW(),
     NOW()
 )
-ON CONFLICT (type, account_id)
+ON CONFLICT ON CONSTRAINT uq_credential_profiles_type_account_id
 DO UPDATE SET
     enabled = EXCLUDED.enabled,
     email = EXCLUDED.email,
@@ -115,3 +117,41 @@ RETURNING
     encrypted_profile,
     created_at,
     modified_at;
+
+-- name: ListEnabledCredentialProfiles :many
+SELECT
+    id,
+    type,
+    account_id,
+    enabled,
+    email,
+    expired,
+    last_refresh_at,
+    encrypted_profile,
+    created_at,
+    modified_at
+FROM credential_profiles
+WHERE enabled = true
+ORDER BY modified_at DESC;
+
+-- name: CountEnabledCredentialProfiles :one
+SELECT COUNT(*) FROM credential_profiles WHERE enabled = true;
+
+-- name: RandomSampleEnabledCredentialProfiles :many
+-- Deterministic random sampling using hash ordering on (id, seed).
+-- The seed parameter allows reproducible ordering across calls.
+SELECT
+    id,
+    type,
+    account_id,
+    enabled,
+    email,
+    expired,
+    last_refresh_at,
+    encrypted_profile,
+    created_at,
+    modified_at
+FROM credential_profiles
+WHERE enabled = true
+ORDER BY md5(id || $2::text)
+LIMIT $1;

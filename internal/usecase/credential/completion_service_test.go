@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,6 +42,18 @@ func (m *mockCompletionRepo) UpsertByTypeAccount(ctx context.Context, profile do
 	}
 	m.upserted = append(m.upserted, profile)
 	return profile, nil
+}
+
+func (m *mockCompletionRepo) ListEnabled(ctx context.Context) ([]domaincredential.Profile, error) {
+	return nil, nil
+}
+
+func (m *mockCompletionRepo) CountEnabled(ctx context.Context) (int64, error) {
+	return 0, nil
+}
+
+func (m *mockCompletionRepo) RandomSample(ctx context.Context, sampleSize int, seed int64) ([]domaincredential.Profile, error) {
+	return nil, nil
 }
 
 // mockEncryptor for testing
@@ -85,6 +98,12 @@ func TestCompletionService_CompleteOAuth_Success(t *testing.T) {
 	encryptor := newMockCompletionEncryptor()
 
 	service := NewCompletionService(repo, encryptor)
+	service.(*completionService).now = func() time.Time {
+		return time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	}
+	service.(*completionService).now = func() time.Time {
+		return time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	}
 	// Override time function for deterministic testing
 	service.(*completionService).now = func() time.Time {
 		return time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
@@ -162,6 +181,12 @@ func TestCompletionService_CompleteOAuth_ReauthUpdatesExisting(t *testing.T) {
 	service.(*completionService).now = func() time.Time {
 		return time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	}
+	service.(*completionService).now = func() time.Time {
+		return time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	}
+	service.(*completionService).now = func() time.Time {
+		return time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	}
 
 	accountID := "test-account-123"
 
@@ -207,12 +232,15 @@ func TestCompletionService_CompleteOAuth_EncryptionFailure(t *testing.T) {
 	encryptor.encryptErr = errors.New("encryption failed")
 
 	service := NewCompletionService(repo, encryptor)
+	service.(*completionService).now = func() time.Time {
+		return time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	}
 
 	accountID := "test-account-123"
 	tokenPayload := domainoauth.TokenPayload{
 		AccessToken:  "access-token-abc",
 		RefreshToken: "refresh-token-xyz",
-		ExpiresAt:    time.Date(2025, 1, 2, 12, 0, 0, 0, time.UTC),
+		ExpiresAt:    time.Date(2025, 1, 1, 13, 0, 0, 0, time.UTC),
 	}
 
 	_, err := service.CompleteOAuth(ctx, accountID, tokenPayload)
@@ -232,6 +260,9 @@ func TestCompletionService_CompleteOAuth_UpsertFailure(t *testing.T) {
 	encryptor := newMockCompletionEncryptor()
 
 	service := NewCompletionService(repo, encryptor)
+	service.(*completionService).now = func() time.Time {
+		return time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	}
 
 	accountID := "test-account-123"
 	tokenPayload := domainoauth.TokenPayload{
@@ -280,5 +311,83 @@ func TestCompletionService_CompleteOAuth_TimestampsSet(t *testing.T) {
 	}
 	if profile.LastRefreshAt != fixedNow {
 		t.Errorf("expected LastRefreshAt to be %v, got %v", fixedNow, profile.LastRefreshAt)
+	}
+}
+
+func TestCompletionService_CompleteOAuth_RejectsMissingAccessToken(t *testing.T) {
+	ctx := context.Background()
+	repo := &mockCompletionRepo{}
+	encryptor := newMockCompletionEncryptor()
+
+	service := NewCompletionService(repo, encryptor)
+	service.(*completionService).now = func() time.Time {
+		return time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	}
+
+	_, err := service.CompleteOAuth(ctx, "test-account-123", domainoauth.TokenPayload{
+		AccessToken:  "",
+		RefreshToken: "refresh-token-xyz",
+		ExpiresAt:    time.Date(2025, 1, 2, 12, 0, 0, 0, time.UTC),
+	})
+	if err == nil {
+		t.Fatal("expected error for missing access token")
+	}
+	if !strings.Contains(err.Error(), "missing access_token") {
+		t.Fatalf("expected missing access_token error, got %v", err)
+	}
+	if len(repo.upserted) != 0 {
+		t.Fatalf("expected no upsert for invalid payload, got %d", len(repo.upserted))
+	}
+}
+
+func TestCompletionService_CompleteOAuth_RejectsMissingRefreshToken(t *testing.T) {
+	ctx := context.Background()
+	repo := &mockCompletionRepo{}
+	encryptor := newMockCompletionEncryptor()
+
+	service := NewCompletionService(repo, encryptor)
+	service.(*completionService).now = func() time.Time {
+		return time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	}
+
+	_, err := service.CompleteOAuth(ctx, "test-account-123", domainoauth.TokenPayload{
+		AccessToken:  "access-token-abc",
+		RefreshToken: "",
+		ExpiresAt:    time.Date(2025, 1, 2, 12, 0, 0, 0, time.UTC),
+	})
+	if err == nil {
+		t.Fatal("expected error for missing refresh token")
+	}
+	if !strings.Contains(err.Error(), "missing refresh_token") {
+		t.Fatalf("expected missing refresh_token error, got %v", err)
+	}
+	if len(repo.upserted) != 0 {
+		t.Fatalf("expected no upsert for invalid payload, got %d", len(repo.upserted))
+	}
+}
+
+func TestCompletionService_CompleteOAuth_RejectsExpiredToken(t *testing.T) {
+	ctx := context.Background()
+	repo := &mockCompletionRepo{}
+	encryptor := newMockCompletionEncryptor()
+
+	service := NewCompletionService(repo, encryptor)
+	service.(*completionService).now = func() time.Time {
+		return time.Date(2025, 1, 2, 12, 0, 0, 0, time.UTC)
+	}
+
+	_, err := service.CompleteOAuth(ctx, "test-account-123", domainoauth.TokenPayload{
+		AccessToken:  "access-token-abc",
+		RefreshToken: "refresh-token-xyz",
+		ExpiresAt:    time.Date(2025, 1, 2, 11, 0, 0, 0, time.UTC),
+	})
+	if err == nil {
+		t.Fatal("expected error for expired token")
+	}
+	if !strings.Contains(err.Error(), "expires_at is not in the future") {
+		t.Fatalf("expected expires_at validation error, got %v", err)
+	}
+	if len(repo.upserted) != 0 {
+		t.Fatalf("expected no upsert for invalid payload, got %d", len(repo.upserted))
 	}
 }

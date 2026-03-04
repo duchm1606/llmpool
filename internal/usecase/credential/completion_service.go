@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	domaincredential "github.com/duchoang/llmpool/internal/domain/credential"
@@ -36,15 +37,22 @@ func (s *completionService) CompleteOAuth(
 	accountID string,
 	tokenPayload domainoauth.TokenPayload,
 ) (domaincredential.Profile, error) {
+	now := s.now()
+
+	validatedAccountID, err := validateOAuthCredential(accountID, tokenPayload, now)
+	if err != nil {
+		return domaincredential.Profile{}, err
+	}
+
 	// Build the credential payload from OAuth tokens
 	profileData := CredentialProfile{
 		Type:         "codex",
-		AccountID:    accountID,
+		AccountID:    validatedAccountID,
 		AccessToken:  tokenPayload.AccessToken,
 		RefreshToken: tokenPayload.RefreshToken,
 		Expired:      tokenPayload.ExpiresAt,
 		Enabled:      boolPtr(true),
-		LastRefresh:  s.now(),
+		LastRefresh:  now,
 	}
 
 	// Marshal to JSON for encryption
@@ -63,11 +71,12 @@ func (s *completionService) CompleteOAuth(
 	profile := domaincredential.Profile{
 		ID:               uuid.NewString(),
 		Type:             "codex",
-		AccountID:        accountID,
+		AccountID:        validatedAccountID,
 		Enabled:          true,
+		Email:            strings.TrimSpace(tokenPayload.Email),
 		EncryptedProfile: encProfile,
 		Expired:          tokenPayload.ExpiresAt,
-		LastRefreshAt:    s.now(),
+		LastRefreshAt:    now,
 	}
 
 	// Use UpsertByTypeAccount to handle both create and reauth scenarios
@@ -78,6 +87,31 @@ func (s *completionService) CompleteOAuth(
 	}
 
 	return savedProfile, nil
+}
+
+func validateOAuthCredential(accountID string, tokenPayload domainoauth.TokenPayload, now time.Time) (string, error) {
+	validatedAccountID := strings.TrimSpace(accountID)
+	if validatedAccountID == "" {
+		return "", fmt.Errorf("invalid oauth credential: missing account_id")
+	}
+
+	if strings.TrimSpace(tokenPayload.AccessToken) == "" {
+		return "", fmt.Errorf("invalid oauth credential: missing access_token")
+	}
+
+	if strings.TrimSpace(tokenPayload.RefreshToken) == "" {
+		return "", fmt.Errorf("invalid oauth credential: missing refresh_token")
+	}
+
+	if tokenPayload.ExpiresAt.IsZero() {
+		return "", fmt.Errorf("invalid oauth credential: missing expires_at")
+	}
+
+	if !tokenPayload.ExpiresAt.After(now) {
+		return "", fmt.Errorf("invalid oauth credential: expires_at is not in the future")
+	}
+
+	return validatedAccountID, nil
 }
 
 // boolPtr returns a pointer to a bool value

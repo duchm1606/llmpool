@@ -44,6 +44,18 @@ func (m *mockRefreshRepo) UpsertByTypeAccount(ctx context.Context, profile domai
 	return profile, nil
 }
 
+func (m *mockRefreshRepo) ListEnabled(ctx context.Context) ([]domaincredential.Profile, error) {
+	return nil, nil
+}
+
+func (m *mockRefreshRepo) CountEnabled(ctx context.Context) (int64, error) {
+	return 0, nil
+}
+
+func (m *mockRefreshRepo) RandomSample(ctx context.Context, sampleSize int, seed int64) ([]domaincredential.Profile, error) {
+	return nil, nil
+}
+
 // Mock refresher for testing
 type mockRefresher struct {
 	result RefreshResult

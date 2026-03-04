@@ -9,8 +9,13 @@ import (
 )
 
 type Querier interface {
+	CountEnabledCredentialProfiles(ctx context.Context) (int64, error)
 	CreateCredentialProfile(ctx context.Context, arg CreateCredentialProfileParams) (CredentialProfile, error)
 	ListCredentialProfiles(ctx context.Context) ([]CredentialProfile, error)
+	ListEnabledCredentialProfiles(ctx context.Context) ([]CredentialProfile, error)
+	// Deterministic random sampling using hash ordering on (id, seed).
+	// The seed parameter allows reproducible ordering across calls.
+	RandomSampleEnabledCredentialProfiles(ctx context.Context, arg RandomSampleEnabledCredentialProfilesParams) ([]CredentialProfile, error)
 	UpdateCredentialProfile(ctx context.Context, arg UpdateCredentialProfileParams) (CredentialProfile, error)
 	UpsertCredentialProfileByTypeAccount(ctx context.Context, arg UpsertCredentialProfileByTypeAccountParams) (CredentialProfile, error)
 }

@@ -27,6 +27,30 @@ func (m *mockCredentialRepository) UpsertByTypeAccount(ctx context.Context, prof
 	return profile, nil
 }
 
+func (m *mockCredentialRepository) Save(ctx context.Context, profile domaincredential.Profile) (domaincredential.Profile, error) {
+	return domaincredential.Profile{}, nil
+}
+
+func (m *mockCredentialRepository) List(ctx context.Context) ([]domaincredential.Profile, error) {
+	return nil, nil
+}
+
+func (m *mockCredentialRepository) Update(ctx context.Context, profile domaincredential.Profile) (domaincredential.Profile, error) {
+	return domaincredential.Profile{}, nil
+}
+
+func (m *mockCredentialRepository) ListEnabled(ctx context.Context) ([]domaincredential.Profile, error) {
+	return nil, nil
+}
+
+func (m *mockCredentialRepository) CountEnabled(ctx context.Context) (int64, error) {
+	return 0, nil
+}
+
+func (m *mockCredentialRepository) RandomSample(ctx context.Context, sampleSize int, seed int64) ([]domaincredential.Profile, error) {
+	return nil, nil
+}
+
 // mockEncryptor is a mock implementation of Encryptor
 type mockEncryptor struct {
 	encrypted map[string]string

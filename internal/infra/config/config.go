@@ -20,6 +20,7 @@ type Config struct {
 	Security     SecurityConfig     `mapstructure:"security"`
 	Credential   CredentialConfig   `mapstructure:"credential"`
 	OAuth        OAuthConfig        `mapstructure:"oauth"`
+	Liveness     LivenessConfig     `mapstructure:"liveness"`
 }
 
 type AppConfig struct {
@@ -76,6 +77,21 @@ type CodexOAuthConfig struct {
 	PollURL     string        `mapstructure:"poll_url"`
 	Timeout     time.Duration `mapstructure:"timeout"`
 	SessionTTL  time.Duration `mapstructure:"session_ttl"`
+}
+
+type LivenessConfig struct {
+	Enabled              bool          `mapstructure:"enabled"`
+	SampleInterval       time.Duration `mapstructure:"sample_interval"`
+	FullSweepInterval    time.Duration `mapstructure:"full_sweep_interval"`
+	SamplePercent        float64       `mapstructure:"sample_percent"`
+	StateTTL             time.Duration `mapstructure:"state_ttl"`
+	AuthFailureCooldown  time.Duration `mapstructure:"auth_failure_cooldown"`
+	RateLimitInitial     time.Duration `mapstructure:"rate_limit_initial"`
+	RateLimitMaxCooldown time.Duration `mapstructure:"rate_limit_max_cooldown"`
+	NetworkErrorCooldown time.Duration `mapstructure:"network_error_cooldown"`
+	NetworkMaxRetries    int           `mapstructure:"network_max_retries"`
+	CodexUsageURL        string        `mapstructure:"codex_usage_url"`
+	CheckTimeout         time.Duration `mapstructure:"check_timeout"`
 }
 
 func Load() (*Config, error) {
@@ -172,6 +188,37 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("oauth.codex.session_ttl must be > 0")
 	}
 
+	// Validate liveness config if enabled
+	if cfg.Liveness.Enabled {
+		if cfg.Liveness.SampleInterval <= 0 {
+			return nil, fmt.Errorf("liveness.sample_interval must be > 0 when liveness is enabled")
+		}
+		if cfg.Liveness.FullSweepInterval <= 0 {
+			return nil, fmt.Errorf("liveness.full_sweep_interval must be > 0 when liveness is enabled")
+		}
+		if cfg.Liveness.SamplePercent <= 0 || cfg.Liveness.SamplePercent > 1 {
+			return nil, fmt.Errorf("liveness.sample_percent must be > 0 and <= 1 when liveness is enabled")
+		}
+		if cfg.Liveness.StateTTL <= 0 {
+			return nil, fmt.Errorf("liveness.state_ttl must be > 0 when liveness is enabled")
+		}
+		if cfg.Liveness.AuthFailureCooldown <= 0 {
+			return nil, fmt.Errorf("liveness.auth_failure_cooldown must be > 0 when liveness is enabled")
+		}
+		if cfg.Liveness.RateLimitInitial <= 0 {
+			return nil, fmt.Errorf("liveness.rate_limit_initial must be > 0 when liveness is enabled")
+		}
+		if cfg.Liveness.RateLimitMaxCooldown <= 0 {
+			return nil, fmt.Errorf("liveness.rate_limit_max_cooldown must be > 0 when liveness is enabled")
+		}
+		if cfg.Liveness.NetworkErrorCooldown <= 0 {
+			return nil, fmt.Errorf("liveness.network_error_cooldown must be > 0 when liveness is enabled")
+		}
+		if cfg.Liveness.NetworkMaxRetries < 0 {
+			return nil, fmt.Errorf("liveness.network_max_retries must be >= 0 when liveness is enabled")
+		}
+	}
+
 	return &cfg, nil
 }
 
@@ -198,4 +245,18 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("orchestrator.lb_strategy", "round-robin")
 
 	v.SetDefault("credential.refresh_interval", "1m")
+
+	// Liveness checker defaults
+	v.SetDefault("liveness.enabled", true)
+	v.SetDefault("liveness.sample_interval", "5m")
+	v.SetDefault("liveness.full_sweep_interval", "60m")
+	v.SetDefault("liveness.sample_percent", 0.20)
+	v.SetDefault("liveness.state_ttl", "2h")
+	v.SetDefault("liveness.auth_failure_cooldown", "30m")
+	v.SetDefault("liveness.rate_limit_initial", "2m")
+	v.SetDefault("liveness.rate_limit_max_cooldown", "30m")
+	v.SetDefault("liveness.network_error_cooldown", "5m")
+	v.SetDefault("liveness.network_max_retries", 3)
+	v.SetDefault("liveness.codex_usage_url", "https://chatgpt.com/backend-api/wham/usage")
+	v.SetDefault("liveness.check_timeout", "10s")
 }

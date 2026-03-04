@@ -11,6 +11,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countEnabledCredentialProfiles = `-- name: CountEnabledCredentialProfiles :one
+SELECT COUNT(*) FROM credential_profiles WHERE enabled = true
+`
+
+func (q *Queries) CountEnabledCredentialProfiles(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countEnabledCredentialProfiles)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createCredentialProfile = `-- name: CreateCredentialProfile :one
 INSERT INTO credential_profiles (
     id,
@@ -134,6 +145,110 @@ func (q *Queries) ListCredentialProfiles(ctx context.Context) ([]CredentialProfi
 	return items, nil
 }
 
+const listEnabledCredentialProfiles = `-- name: ListEnabledCredentialProfiles :many
+SELECT
+    id,
+    type,
+    account_id,
+    enabled,
+    email,
+    expired,
+    last_refresh_at,
+    encrypted_profile,
+    created_at,
+    modified_at
+FROM credential_profiles
+WHERE enabled = true
+ORDER BY modified_at DESC
+`
+
+func (q *Queries) ListEnabledCredentialProfiles(ctx context.Context) ([]CredentialProfile, error) {
+	rows, err := q.db.Query(ctx, listEnabledCredentialProfiles)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CredentialProfile{}
+	for rows.Next() {
+		var i CredentialProfile
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.AccountID,
+			&i.Enabled,
+			&i.Email,
+			&i.Expired,
+			&i.LastRefreshAt,
+			&i.EncryptedProfile,
+			&i.CreatedAt,
+			&i.ModifiedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const randomSampleEnabledCredentialProfiles = `-- name: RandomSampleEnabledCredentialProfiles :many
+SELECT
+    id,
+    type,
+    account_id,
+    enabled,
+    email,
+    expired,
+    last_refresh_at,
+    encrypted_profile,
+    created_at,
+    modified_at
+FROM credential_profiles
+WHERE enabled = true
+ORDER BY md5(id || $2::text)
+LIMIT $1
+`
+
+type RandomSampleEnabledCredentialProfilesParams struct {
+	Limit   int32  `json:"limit"`
+	Column2 string `json:"column_2"`
+}
+
+// Deterministic random sampling using hash ordering on (id, seed).
+// The seed parameter allows reproducible ordering across calls.
+func (q *Queries) RandomSampleEnabledCredentialProfiles(ctx context.Context, arg RandomSampleEnabledCredentialProfilesParams) ([]CredentialProfile, error) {
+	rows, err := q.db.Query(ctx, randomSampleEnabledCredentialProfiles, arg.Limit, arg.Column2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CredentialProfile{}
+	for rows.Next() {
+		var i CredentialProfile
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.AccountID,
+			&i.Enabled,
+			&i.Email,
+			&i.Expired,
+			&i.LastRefreshAt,
+			&i.EncryptedProfile,
+			&i.CreatedAt,
+			&i.ModifiedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateCredentialProfile = `-- name: UpdateCredentialProfile :one
 UPDATE credential_profiles
 SET
@@ -199,6 +314,7 @@ func (q *Queries) UpdateCredentialProfile(ctx context.Context, arg UpdateCredent
 
 const upsertCredentialProfileByTypeAccount = `-- name: UpsertCredentialProfileByTypeAccount :one
 INSERT INTO credential_profiles (
+    id,
     type,
     account_id,
     enabled,
@@ -216,10 +332,11 @@ INSERT INTO credential_profiles (
     $5,
     $6,
     $7,
+    $8,
     NOW(),
     NOW()
 )
-ON CONFLICT (type, account_id)
+ON CONFLICT ON CONSTRAINT uq_credential_profiles_type_account_id
 DO UPDATE SET
     enabled = EXCLUDED.enabled,
     email = EXCLUDED.email,
@@ -241,6 +358,7 @@ RETURNING
 `
 
 type UpsertCredentialProfileByTypeAccountParams struct {
+	ID               string             `json:"id"`
 	Type             string             `json:"type"`
 	AccountID        string             `json:"account_id"`
 	Enabled          bool               `json:"enabled"`
@@ -252,6 +370,7 @@ type UpsertCredentialProfileByTypeAccountParams struct {
 
 func (q *Queries) UpsertCredentialProfileByTypeAccount(ctx context.Context, arg UpsertCredentialProfileByTypeAccountParams) (CredentialProfile, error) {
 	row := q.db.QueryRow(ctx, upsertCredentialProfileByTypeAccount,
+		arg.ID,
 		arg.Type,
 		arg.AccountID,
 		arg.Enabled,
