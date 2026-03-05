@@ -178,6 +178,7 @@ func main() {
 		HealthService:                 healthService,
 		ImportService:                 importService,
 		RefreshService:                refreshService,
+		QuotaService:                  quotaService,
 		OAuthProvider:                 oauthProvider,
 		OAuthSessionStore:             oauthSessionStore,
 		OAuthConfig:                   cfg.OAuth.Codex,

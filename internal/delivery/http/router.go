@@ -11,6 +11,7 @@ import (
 	usecasecredential "github.com/duchoang/llmpool/internal/usecase/credential"
 	usecasehealth "github.com/duchoang/llmpool/internal/usecase/health"
 	usecaseoauth "github.com/duchoang/llmpool/internal/usecase/oauth"
+	usecasequota "github.com/duchoang/llmpool/internal/usecase/quota"
 	"github.com/gin-gonic/gin"
 )
 
@@ -20,6 +21,7 @@ type RouterDeps struct {
 	HealthService          usecasehealth.Service
 	ImportService          usecasecredential.ImportService
 	RefreshService         usecasecredential.RefreshService
+	QuotaService           usecasequota.LivenessService
 	OAuthProvider          usecaseoauth.OAuthProvider
 	OAuthSessionStore      usecaseoauth.OAuthSessionStore
 	OAuthConfig            configinfra.CodexOAuthConfig
@@ -89,7 +91,7 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 	credentialHandler := handler.NewCredentialHandler(deps.ImportService)
 	r.POST("/v1/internal/auth-profiles/import", credentialHandler.Import)
 
-	refreshHandler := handler.NewRefreshHandler(deps.RefreshService)
+	refreshHandler := handler.NewRefreshHandler(deps.RefreshService, deps.QuotaService)
 	r.POST("/v1/internal/auth-profiles/refresh", refreshHandler.Refresh)
 
 	oauthHandler := handler.NewOAuthHandler(deps.OAuthProvider, deps.OAuthSessionStore, deps.OAuthConfig, deps.OAuthSessionTTL, deps.OAuthCompletionService)

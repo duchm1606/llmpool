@@ -88,7 +88,7 @@ type copilotQuotaDetail struct {
 	OveragePermitted bool     `json:"overage_permitted"`
 	PercentRemaining *float64 `json:"percent_remaining"`
 	QuotaID          string   `json:"quota_id"`
-	QuotaRemaining   int64    `json:"quota_remaining"`
+	QuotaRemaining   float64  `json:"quota_remaining"`
 	Remaining        int64    `json:"remaining"`
 	Unlimited        *bool    `json:"unlimited"`
 	TimestampUTC     string   `json:"timestamp_utc"`
@@ -147,8 +147,9 @@ func (c *CopilotChecker) Check(ctx context.Context, credentialType, accessToken,
 
 	// If successful, parse quota from response body
 	if resp.StatusCode == http.StatusOK {
-		quotaInfo, exhausted := c.extractQuotaFromUsageBody(body)
+		quotaInfo, quotaDetail, exhausted := c.extractQuotaFromUsageBody(body)
 		result.Quota = quotaInfo
+		result.QuotaDetail = quotaDetail
 
 		if exhausted {
 			result.Healthy = false
@@ -164,21 +165,23 @@ func (c *CopilotChecker) Check(ctx context.Context, credentialType, accessToken,
 }
 
 // extractQuotaFromUsageBody parses the Copilot usage response and extracts quota information.
-// Returns quota info and whether the account is exhausted.
-func (c *CopilotChecker) extractQuotaFromUsageBody(body []byte) (domainquota.QuotaInfo, bool) {
+// Returns aggregate quota info, full quota detail, and whether the account is exhausted.
+func (c *CopilotChecker) extractQuotaFromUsageBody(body []byte) (domainquota.QuotaInfo, *domainquota.CopilotQuotaSnapshots, bool) {
 	if len(body) == 0 {
-		return domainquota.NewQuotaInfoUnknown(), false
+		return domainquota.NewQuotaInfoUnknown(), nil, false
 	}
 
 	var usage copilotUsageResponse
 	if err := json.Unmarshal(body, &usage); err != nil {
-		return domainquota.NewQuotaInfoUnknown(), false
+		return domainquota.NewQuotaInfoUnknown(), nil, false
 	}
 
 	// Handle nil QuotaSnapshots
 	if usage.QuotaSnapshots == nil {
-		return domainquota.NewQuotaInfoUnknown(), false
+		return domainquota.NewQuotaInfoUnknown(), nil, false
 	}
+
+	quotaDetail := c.toDomainQuotaSnapshots(usage.QuotaSnapshots)
 
 	// Priority: premium_interactions > chat > completions
 	// These represent the most constrained quotas
@@ -190,7 +193,30 @@ func (c *CopilotChecker) extractQuotaFromUsageBody(body []byte) (domainquota.Quo
 
 	exhausted := c.isExhausted(usage.QuotaSnapshots.PremiumInteractions, usage.QuotaSnapshots.Chat)
 
-	return quota, exhausted
+	return quota, quotaDetail, exhausted
+}
+
+func (c *CopilotChecker) toDomainQuotaSnapshots(details *copilotQuotaDetails) *domainquota.CopilotQuotaSnapshots {
+	if details == nil {
+		return nil
+	}
+
+	out := &domainquota.CopilotQuotaSnapshots{}
+	if details.Chat != nil {
+		out.Chat = c.toDomainQuotaSnapshot(details.Chat)
+	}
+	if details.Completions != nil {
+		out.Completions = c.toDomainQuotaSnapshot(details.Completions)
+	}
+	if details.PremiumInteractions != nil {
+		out.PremiumInteractions = c.toDomainQuotaSnapshot(details.PremiumInteractions)
+	}
+
+	if out.Chat == nil && out.Completions == nil && out.PremiumInteractions == nil {
+		return nil
+	}
+
+	return out
 }
 
 // extractBestQuota extracts the most restrictive quota from available quota details.

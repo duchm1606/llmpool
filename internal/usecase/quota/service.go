@@ -2,6 +2,8 @@ package quota
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"math/rand/v2"
@@ -271,6 +273,8 @@ func (s *Service) checkSingleProfile(ctx context.Context, profile domaincredenti
 		accountID = strings.TrimSpace(profile.AccountID)
 	}
 
+	accessTokenHash := hashTokenForCache(payload.AccessToken, checkToken)
+
 	// Perform provider check with retry logic
 	result, err := s.checkWithRetry(ctx, profile.Type, profile.ID, checkToken, accountID)
 	if err != nil {
@@ -284,7 +288,7 @@ func (s *Service) checkSingleProfile(ctx context.Context, profile domaincredenti
 	}
 
 	// Build state from result
-	state := s.buildStateFromResult(ctx, profile.ID, result, err)
+	state := s.buildStateFromResult(ctx, profile.ID, accessTokenHash, result, err)
 
 	// Update cache
 	if cacheErr := s.cache.SetCredentialState(ctx, state, s.cfg.StateTTL); cacheErr != nil {
@@ -406,12 +410,14 @@ func (s *Service) checkWithRetry(ctx context.Context, credType, credID, accessTo
 
 // buildStateFromResult creates a CredentialState from check result.
 // ctx is used for retrieving existing state during rate-limit backoff calculation.
-func (s *Service) buildStateFromResult(ctx context.Context, credID string, result domainquota.CheckResult, checkErr error) domainquota.CredentialState {
+func (s *Service) buildStateFromResult(ctx context.Context, credID, accessTokenHash string, result domainquota.CheckResult, checkErr error) domainquota.CredentialState {
 	now := time.Now()
 	state := domainquota.CredentialState{
-		CredentialID:  credID,
-		LastCheckedAt: now,
-		Quota:         result.Quota, // Persist quota from check result
+		CredentialID:    credID,
+		LastCheckedAt:   now,
+		Quota:           result.Quota, // Persist quota from check result
+		QuotaDetail:     result.QuotaDetail,
+		AccessTokenHash: accessTokenHash,
 	}
 
 	// Update deprecated AvailableQuota for backwards compatibility
@@ -463,6 +469,19 @@ func (s *Service) buildStateFromResult(ctx context.Context, credID string, resul
 	}
 
 	return state
+}
+
+func hashTokenForCache(accessToken, fallbackToken string) string {
+	token := strings.TrimSpace(accessToken)
+	if token == "" {
+		token = strings.TrimSpace(fallbackToken)
+	}
+	if token == "" {
+		return ""
+	}
+
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }
 
 // isNetworkError checks if the error is a network-related error using proper error unwrapping.

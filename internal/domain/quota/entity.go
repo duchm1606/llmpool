@@ -59,15 +59,17 @@ func (q QuotaInfo) IsKnown() bool {
 
 // CredentialState represents the full liveness/quota state of a credential in cache.
 type CredentialState struct {
-	CredentialID   string
-	Status         CredentialStatus
-	LastCheckedAt  time.Time
-	CooldownUntil  time.Time // Zero if not in cooldown
-	RetryCount     int       // For exponential backoff
-	ErrorCode      int       // Last error code (401, 403, 429, etc.)
-	ErrorMessage   string
-	AvailableQuota int64 // -1 if unknown (deprecated: use Quota)
-	Quota          QuotaInfo
+	CredentialID    string
+	Status          CredentialStatus
+	LastCheckedAt   time.Time
+	CooldownUntil   time.Time // Zero if not in cooldown
+	RetryCount      int       // For exponential backoff
+	ErrorCode       int       // Last error code (401, 403, 429, etc.)
+	ErrorMessage    string
+	AvailableQuota  int64 // -1 if unknown (deprecated: use Quota)
+	Quota           QuotaInfo
+	QuotaDetail     *CopilotQuotaSnapshots
+	AccessTokenHash string
 }
 
 // IsAvailable returns true if credential can be used for requests.
@@ -112,7 +114,8 @@ type CheckResult struct {
 	CheckedAt    time.Time
 	ErrorCode    int
 	ErrorMessage string
-	Quota        QuotaInfo          // Quota info extracted from response headers
+	Quota        QuotaInfo // Quota info extracted from provider response
+	QuotaDetail  *CopilotQuotaSnapshots
 	Models       []ModelCheckResult // Per-model results if available
 }
 
@@ -164,7 +167,7 @@ type CopilotQuotaSnapshot struct {
 	OveragePermitted bool    `json:"overage_permitted"`
 	PercentRemaining float64 `json:"percent_remaining"`
 	QuotaID          string  `json:"quota_id"`
-	QuotaRemaining   int64   `json:"quota_remaining"`
+	QuotaRemaining   float64 `json:"quota_remaining"`
 	Remaining        int64   `json:"remaining"`
 	Unlimited        bool    `json:"unlimited"`
 	TimestampUTC     string  `json:"timestamp_utc,omitempty"`

@@ -2,6 +2,8 @@ package quota
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"sync"
 	"testing"
@@ -850,6 +852,71 @@ func TestService_CopilotFallsBackToAccessTokenWhenRefreshTokenMissing(t *testing
 
 	if checker.lastAccessToken != "copilot-session-token" {
 		t.Fatalf("checker token = %q, want copilot-session-token", checker.lastAccessToken)
+	}
+
+	state := cache.states["cred-1"]
+	if state == nil {
+		t.Fatal("state not found")
+	}
+
+	sum := sha256.Sum256([]byte("copilot-session-token"))
+	expectedHash := hex.EncodeToString(sum[:])
+	if state.AccessTokenHash != expectedHash {
+		t.Fatalf("access_token_hash = %q, want %q", state.AccessTokenHash, expectedHash)
+	}
+}
+
+func TestService_CopilotPersistsQuotaDetailInCredentialState(t *testing.T) {
+	ctx := context.Background()
+	logger := zap.NewNop()
+
+	profiles := []domaincredential.Profile{{
+		ID:               "cred-1",
+		Type:             "copilot",
+		AccountID:        "gh-user",
+		EncryptedProfile: "encrypted1",
+	}}
+
+	repo := &mockCredentialRepository{profiles: profiles}
+	encryptor := &mockEncryptor{
+		decrypted: `{"access_token":"copilot-session-token","refresh_token":"github-token"}`,
+	}
+
+	pct := 79.33
+	unlimited := false
+	checker := &mockProviderChecker{
+		result: domainquota.CheckResult{
+			Healthy:   true,
+			CheckedAt: time.Now(),
+			Quota:     domainquota.NewQuotaInfo(238, 300),
+			QuotaDetail: &domainquota.CopilotQuotaSnapshots{
+				PremiumInteractions: &domainquota.CopilotQuotaSnapshot{
+					Entitlement:      300,
+					PercentRemaining: pct,
+					QuotaID:          "premium_interactions",
+					QuotaRemaining:   238.01,
+					Remaining:        238,
+					Unlimited:        unlimited,
+				},
+			},
+		},
+	}
+	cache := newMockStateCache()
+
+	svc := NewService(repo, encryptor, checker, cache, logger, DefaultServiceConfig())
+	if err := svc.CheckAll(ctx); err != nil {
+		t.Fatalf("CheckAll() error = %v", err)
+	}
+
+	state := cache.states["cred-1"]
+	if state == nil {
+		t.Fatal("state not found")
+	}
+	if state.QuotaDetail == nil || state.QuotaDetail.PremiumInteractions == nil {
+		t.Fatal("expected quota detail to be persisted")
+	}
+	if state.QuotaDetail.PremiumInteractions.QuotaID != "premium_interactions" {
+		t.Fatalf("quota_id = %q, want premium_interactions", state.QuotaDetail.PremiumInteractions.QuotaID)
 	}
 }
 
