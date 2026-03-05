@@ -44,6 +44,7 @@ type ImportService interface {
 
 type RefreshService interface {
 	RefreshDue(ctx context.Context) error
+	RefreshCredential(ctx context.Context, credentialID string) error
 }
 
 type OAuthCompletionService interface {

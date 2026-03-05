@@ -33,6 +33,7 @@ type service struct {
 	registry      ProviderRegistry
 	healthTracker ProviderHealthTracker
 	client        ProviderClient
+	refresher     CredentialRefresher
 	config        ServiceConfig
 	logger        *zap.Logger
 }
@@ -43,6 +44,7 @@ func NewService(
 	registry ProviderRegistry,
 	healthTracker ProviderHealthTracker,
 	client ProviderClient,
+	refresher CredentialRefresher,
 	config ServiceConfig,
 	logger *zap.Logger,
 ) CompletionService {
@@ -51,6 +53,7 @@ func NewService(
 		registry:      registry,
 		healthTracker: healthTracker,
 		client:        client,
+		refresher:     refresher,
 		config:        config,
 		logger:        logger,
 	}
@@ -95,6 +98,25 @@ func (s *service) ChatCompletion(
 		startTime := time.Now()
 		resp, err := s.client.ChatCompletion(ctx, *decision, req)
 		duration := time.Since(startTime)
+
+		if err != nil {
+			refreshed, retryResp, retryErr := s.tryRefreshCopilotAndRetry(ctx, req, *decision, err)
+			if refreshed {
+				if retryErr == nil {
+					s.healthTracker.MarkSuccess(decision.ProviderID)
+					s.logger.Info("completion request succeeded after copilot refresh",
+						zap.String("provider", string(decision.ProviderID)),
+						zap.String("model", req.Model),
+						zap.String("credential_id", decision.CredentialID),
+						zap.String("credential_type", decision.CredentialType),
+						zap.String("credential_account_id", decision.CredentialAccountID),
+						zap.Duration("duration", duration),
+					)
+					return retryResp, nil
+				}
+				err = retryErr
+			}
+		}
 
 		if err == nil {
 			// Success
@@ -158,6 +180,151 @@ func (s *service) ChatCompletion(
 	return nil, domaincompletion.ErrAllProvidersFailed(req.Model, s.config.MaxFallbackAttempts)
 }
 
+func (s *service) tryRefreshCopilotAndRetry(
+	ctx context.Context,
+	req domaincompletion.ChatCompletionRequest,
+	decision domainprovider.RoutingDecision,
+	err error,
+) (bool, *domaincompletion.ChatCompletionResponse, error) {
+	if s.refresher == nil {
+		return false, nil, err
+	}
+
+	if decision.ProviderID != domainprovider.ProviderCopilot {
+		return false, nil, err
+	}
+
+	if decision.CredentialID == "" {
+		return false, nil, err
+	}
+
+	apiErr := getAPIError(err)
+	if apiErr == nil || apiErr.HTTPStatus != http.StatusUnauthorized {
+		return false, nil, err
+	}
+
+	if refreshErr := s.refresher.RefreshCredential(ctx, decision.CredentialID); refreshErr != nil {
+		s.logger.Warn("copilot inline refresh failed",
+			zap.String("credential_id", decision.CredentialID),
+			zap.String("credential_type", decision.CredentialType),
+			zap.String("credential_account_id", decision.CredentialAccountID),
+			zap.Error(refreshErr),
+		)
+		return true, nil, err
+	}
+
+	newDecision, routeErr := s.router.RouteWithHint(
+		ctx,
+		req.Model,
+		string(domainprovider.ProviderCopilot),
+		nil,
+	)
+	if routeErr != nil {
+		s.logger.Warn("copilot inline refresh succeeded but reroute failed",
+			zap.String("credential_id", decision.CredentialID),
+			zap.Error(routeErr),
+		)
+		return true, nil, err
+	}
+
+	retryResp, retryErr := s.client.ChatCompletion(ctx, *newDecision, req)
+	if retryErr != nil {
+		s.logger.Warn("copilot retry after inline refresh failed",
+			zap.String("credential_id", newDecision.CredentialID),
+			zap.String("credential_type", newDecision.CredentialType),
+			zap.String("credential_account_id", newDecision.CredentialAccountID),
+			zap.Error(retryErr),
+		)
+		return true, nil, retryErr
+	}
+
+	s.logger.Info("copilot inline refresh and retry succeeded",
+		zap.String("old_credential_id", decision.CredentialID),
+		zap.String("new_credential_id", newDecision.CredentialID),
+		zap.String("credential_account_id", newDecision.CredentialAccountID),
+	)
+
+	return true, retryResp, nil
+}
+
+func getAPIError(err error) *domaincompletion.APIError {
+	if err == nil {
+		return nil
+	}
+	var apiErr *domaincompletion.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr
+	}
+	return nil
+}
+
+func (s *service) tryRefreshCopilotAndRetryStream(
+	ctx context.Context,
+	req domaincompletion.ChatCompletionRequest,
+	decision domainprovider.RoutingDecision,
+	err error,
+) (bool, <-chan StreamChunk, error) {
+	if s.refresher == nil {
+		return false, nil, err
+	}
+
+	if decision.ProviderID != domainprovider.ProviderCopilot {
+		return false, nil, err
+	}
+
+	if decision.CredentialID == "" {
+		return false, nil, err
+	}
+
+	apiErr := getAPIError(err)
+	if apiErr == nil || apiErr.HTTPStatus != http.StatusUnauthorized {
+		return false, nil, err
+	}
+
+	if refreshErr := s.refresher.RefreshCredential(ctx, decision.CredentialID); refreshErr != nil {
+		s.logger.Warn("copilot inline refresh failed for stream",
+			zap.String("credential_id", decision.CredentialID),
+			zap.String("credential_type", decision.CredentialType),
+			zap.String("credential_account_id", decision.CredentialAccountID),
+			zap.Error(refreshErr),
+		)
+		return true, nil, err
+	}
+
+	newDecision, routeErr := s.router.RouteWithHint(
+		ctx,
+		req.Model,
+		string(domainprovider.ProviderCopilot),
+		nil,
+	)
+	if routeErr != nil {
+		s.logger.Warn("copilot inline refresh succeeded but stream reroute failed",
+			zap.String("credential_id", decision.CredentialID),
+			zap.Error(routeErr),
+		)
+		return true, nil, err
+	}
+
+	retryChunks, retryErr := s.client.ChatCompletionStream(ctx, *newDecision, req)
+	if retryErr != nil {
+		s.logger.Warn("copilot stream retry after inline refresh failed",
+			zap.String("credential_id", newDecision.CredentialID),
+			zap.String("credential_type", newDecision.CredentialType),
+			zap.String("credential_account_id", newDecision.CredentialAccountID),
+			zap.Error(retryErr),
+		)
+		return true, nil, retryErr
+	}
+
+	s.logger.Info("copilot inline refresh and stream retry succeeded",
+		zap.String("old_credential_id", decision.CredentialID),
+		zap.String("new_credential_id", newDecision.CredentialID),
+		zap.String("credential_account_id", newDecision.CredentialAccountID),
+	)
+
+	return true, retryChunks, nil
+}
+
 // ChatCompletionStream handles a streaming chat completion request.
 func (s *service) ChatCompletionStream(
 	ctx context.Context,
@@ -192,6 +359,17 @@ func (s *service) ChatCompletionStream(
 
 		// Execute streaming request
 		chunks, err := s.client.ChatCompletionStream(ctx, *decision, req)
+		if err != nil {
+			refreshed, retryChunks, retryErr := s.tryRefreshCopilotAndRetryStream(ctx, req, *decision, err)
+			if refreshed {
+				if retryErr == nil {
+					chunks = retryChunks
+					err = nil
+				} else {
+					err = retryErr
+				}
+			}
+		}
 		if err != nil {
 			lastErr = err
 			s.healthTracker.MarkFailure(decision.ProviderID, 0, err)

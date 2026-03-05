@@ -51,8 +51,9 @@ type Service struct {
 }
 
 type authPayload struct {
-	AccessToken string `json:"access_token"`
-	AccountID   string `json:"account_id"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	AccountID    string `json:"account_id"`
 }
 
 // NewService creates a new liveness service.
@@ -228,11 +229,33 @@ func (s *Service) checkSingleProfile(ctx context.Context, profile domaincredenti
 	}
 
 	if strings.TrimSpace(payload.AccessToken) == "" {
-		s.logger.Warn("credential has empty access token",
+		// Keep validation for non-Copilot providers in place.
+		// Copilot liveness checks use GitHub token (refresh_token) when available.
+		if profile.Type != "copilot" {
+			s.logger.Warn("credential has empty access token",
+				zap.String("credential_id", profile.ID),
+				zap.String("provider", profile.Type),
+				zap.String("account_id", profile.AccountID),
+				zap.String("email", profile.Email),
+			)
+			state := domainquota.CredentialState{
+				CredentialID:  profile.ID,
+				Status:        domainquota.StatusUnhealthy,
+				LastCheckedAt: time.Now(),
+				ErrorMessage:  "missing_access_token",
+			}
+			return s.cache.SetCredentialState(ctx, state, s.cfg.StateTTL)
+		}
+	}
+
+	checkToken, tokenKind := selectCheckToken(profile.Type, payload)
+	if strings.TrimSpace(checkToken) == "" {
+		s.logger.Warn("credential missing token for liveness check",
 			zap.String("credential_id", profile.ID),
 			zap.String("provider", profile.Type),
 			zap.String("account_id", profile.AccountID),
 			zap.String("email", profile.Email),
+			zap.String("expected_token", tokenKind),
 		)
 		state := domainquota.CredentialState{
 			CredentialID:  profile.ID,
@@ -249,7 +272,7 @@ func (s *Service) checkSingleProfile(ctx context.Context, profile domaincredenti
 	}
 
 	// Perform provider check with retry logic
-	result, err := s.checkWithRetry(ctx, profile.Type, profile.ID, payload.AccessToken, accountID)
+	result, err := s.checkWithRetry(ctx, profile.Type, profile.ID, checkToken, accountID)
 	if err != nil {
 		s.logger.Error("check with retry failed",
 			zap.String("credential_id", profile.ID),
@@ -317,10 +340,23 @@ func (s *Service) checkSingleProfile(ctx context.Context, profile domaincredenti
 
 	// Fetch and cache full Copilot usage for copilot credentials
 	if profile.Type == "copilot" && s.copilotUsageFetcher != nil && result.Healthy {
-		s.fetchAndCacheCopilotUsage(ctx, profile.ID, payload.AccessToken)
+		s.fetchAndCacheCopilotUsage(ctx, profile.ID, checkToken)
 	}
 
 	return nil
+}
+
+// selectCheckToken chooses which token should be used for provider liveness checks.
+// For Copilot usage API checks, GitHub token (refresh_token) is preferred.
+func selectCheckToken(profileType string, payload authPayload) (token, kind string) {
+	if profileType == "copilot" {
+		if refresh := strings.TrimSpace(payload.RefreshToken); refresh != "" {
+			return refresh, "refresh_token"
+		}
+		return strings.TrimSpace(payload.AccessToken), "access_token"
+	}
+
+	return strings.TrimSpace(payload.AccessToken), "access_token"
 }
 
 // extractAuthPayload decrypts the credential payload and extracts auth fields.

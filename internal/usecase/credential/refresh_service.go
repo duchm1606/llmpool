@@ -27,70 +27,102 @@ func (s *refreshService) RefreshDue(ctx context.Context) error {
 	}
 
 	for _, profile := range profiles {
-		if !profile.Enabled {
+		if err := s.refreshProfile(ctx, profile, false); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// RefreshCredential refreshes a specific credential immediately, bypassing due checks.
+func (s *refreshService) RefreshCredential(ctx context.Context, credentialID string) error {
+	profiles, err := s.repo.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list profiles: %w", err)
+	}
+
+	for _, profile := range profiles {
+		if profile.ID != credentialID {
 			continue
 		}
+		return s.refreshProfile(ctx, profile, true)
+	}
 
-		if !isDue(profile, s.now()) {
-			continue
+	return fmt.Errorf("credential %s not found", credentialID)
+}
+
+func (s *refreshService) refreshProfile(ctx context.Context, profile domaincredential.Profile, force bool) error {
+	if !profile.Enabled {
+		return nil
+	}
+
+	if !force && !isDue(profile, s.now()) {
+		return nil
+	}
+
+	refresher, ok := s.refreshers[profile.Type]
+	if !ok {
+		return nil
+	}
+
+	oldPayload, err := s.decryptProfile(profile.EncryptedProfile)
+	if err != nil {
+		return fmt.Errorf("decrypt existing profile %s: %w", profile.ID, err)
+	}
+
+	// Get the current refresh token for the refresh operation
+	currentRefreshToken := oldPayload.RefreshToken
+	if currentRefreshToken == "" {
+		if force {
+			return fmt.Errorf("refresh token missing for credential %s", profile.ID)
+		}
+		// No refresh token available, skip this profile in scheduled flow
+		return nil
+	}
+
+	result, refreshErr := refresher.Refresh(ctx, currentRefreshToken)
+	now := s.now().UTC()
+
+	if refreshErr != nil {
+		if force {
+			return fmt.Errorf("refresh credential %s: %w", profile.ID, refreshErr)
 		}
 
-		refresher, ok := s.refreshers[profile.Type]
-		if !ok {
-			continue
-		}
-
-		oldPayload, err := s.decryptProfile(profile.EncryptedProfile)
-		if err != nil {
-			return fmt.Errorf("decrypt existing profile %s: %w", profile.ID, err)
-		}
-
-		// Get the current refresh token for the refresh operation
-		currentRefreshToken := oldPayload.RefreshToken
-		if currentRefreshToken == "" {
-			// No refresh token available, skip this profile
-			continue
-		}
-
-		result, refreshErr := refresher.Refresh(ctx, currentRefreshToken)
-		now := s.now().UTC()
-
-		if refreshErr != nil {
-			profile.Enabled = false
-			if _, updateErr := s.repo.Update(ctx, profile); updateErr != nil {
-				return fmt.Errorf("disable profile after refresh failure: %w", updateErr)
-			}
-			continue
-		}
-
-		// Safe update: Only update access token and expiry
-		// Only update refresh token if provider returned a new one (rotation)
-		oldPayload.AccessToken = result.AccessToken
-		if result.RefreshToken != "" {
-			oldPayload.RefreshToken = result.RefreshToken
-		}
-		oldPayload.Expired = result.ExpiresAt.UTC()
-		oldPayload.Enabled = &[]bool{true}[0]
-		oldPayload.LastRefresh = now
-
-		raw, marshalErr := json.Marshal(oldPayload)
-		if marshalErr != nil {
-			return fmt.Errorf("marshal refreshed profile json: %w", marshalErr)
-		}
-
-		encProfile, encryptErr := s.encryptor.Encrypt(string(raw))
-		if encryptErr != nil {
-			return fmt.Errorf("encrypt refreshed profile json: %w", encryptErr)
-		}
-
-		profile.EncryptedProfile = encProfile
-		profile.Expired = result.ExpiresAt
-		profile.Enabled = true
-		profile.LastRefreshAt = now
-
+		profile.Enabled = false
 		if _, updateErr := s.repo.Update(ctx, profile); updateErr != nil {
-			return fmt.Errorf("update profile after refresh: %w", updateErr)
+			return fmt.Errorf("disable profile after refresh failure: %w", updateErr)
 		}
+		return nil
+	}
+
+	// Safe update: Only update access token and expiry
+	// Only update refresh token if provider returned a new one (rotation)
+	oldPayload.AccessToken = result.AccessToken
+	if result.RefreshToken != "" {
+		oldPayload.RefreshToken = result.RefreshToken
+	}
+	oldPayload.Expired = result.ExpiresAt.UTC()
+	oldPayload.Enabled = &[]bool{true}[0]
+	oldPayload.LastRefresh = now
+
+	raw, marshalErr := json.Marshal(oldPayload)
+	if marshalErr != nil {
+		return fmt.Errorf("marshal refreshed profile json: %w", marshalErr)
+	}
+
+	encProfile, encryptErr := s.encryptor.Encrypt(string(raw))
+	if encryptErr != nil {
+		return fmt.Errorf("encrypt refreshed profile json: %w", encryptErr)
+	}
+
+	profile.EncryptedProfile = encProfile
+	profile.Expired = result.ExpiresAt
+	profile.Enabled = true
+	profile.LastRefreshAt = now
+
+	if _, updateErr := s.repo.Update(ctx, profile); updateErr != nil {
+		return fmt.Errorf("update profile after refresh: %w", updateErr)
 	}
 
 	return nil

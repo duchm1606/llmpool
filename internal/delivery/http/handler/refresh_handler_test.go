@@ -18,6 +18,10 @@ func (s refreshServiceStub) RefreshDue(_ context.Context) error {
 	return s.err
 }
 
+func (s refreshServiceStub) RefreshCredential(_ context.Context, _ string) error {
+	return s.err
+}
+
 func TestRefreshHandler_Refresh_OK(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

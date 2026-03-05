@@ -72,10 +72,7 @@ routing:
   enabled: true
   # Provider priority order (first = highest priority)
   provider_priority:
-    - codex
     - copilot
-    - openai
-    - anthropic
   # Fallback behavior
   fallback:
     enabled: true
@@ -95,7 +92,7 @@ routing:
 # is determined by the ProviderModels map in models.go
 providers:
   codex:
-    enabled: true
+    enabled: false
     name: "OpenAI Codex"
     base_url: "https://chatgpt.com/backend-api/codex"
     auth_type: bearer_pool

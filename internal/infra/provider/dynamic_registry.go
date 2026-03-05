@@ -95,6 +95,13 @@ func (r *dynamicRegistry) refreshProviders(ctx context.Context) {
 	for _, providerType := range availableTypes {
 		providerID := domainprovider.ProviderID(providerType)
 
+		if cfg, ok := r.providerConfigs[providerID]; ok && !cfg.Enabled {
+			r.logger.Info("provider disabled by config, skipping",
+				zap.String("provider_id", string(providerID)),
+			)
+			continue
+		}
+
 		// Get models for this provider type from our models.go definitions
 		models := GetModelsForProvider(providerType)
 		if len(models) == 0 {

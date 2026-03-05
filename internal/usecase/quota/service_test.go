@@ -796,6 +796,90 @@ func TestService_FallsBackToProfileAccountIDForChecker(t *testing.T) {
 	}
 }
 
+func TestService_CopilotUsesRefreshTokenForChecker(t *testing.T) {
+	ctx := context.Background()
+	logger := zap.NewNop()
+
+	profiles := []domaincredential.Profile{
+		{ID: "cred-1", Type: "copilot", AccountID: "gh-user", EncryptedProfile: "encrypted1"},
+	}
+
+	repo := &mockCredentialRepository{profiles: profiles}
+	encryptor := &mockEncryptor{
+		decrypted: `{"access_token":"copilot-session-token","refresh_token":"github-token"}`,
+	}
+	checker := &mockProviderChecker{
+		result: domainquota.CheckResult{Healthy: true, CheckedAt: time.Now()},
+	}
+	cache := newMockStateCache()
+
+	svc := NewService(repo, encryptor, checker, cache, logger, DefaultServiceConfig())
+	if err := svc.CheckAll(ctx); err != nil {
+		t.Fatalf("CheckAll() error = %v", err)
+	}
+
+	if checker.lastCredentialType != "copilot" {
+		t.Fatalf("checker credential type = %q, want copilot", checker.lastCredentialType)
+	}
+	if checker.lastAccessToken != "github-token" {
+		t.Fatalf("checker token = %q, want github-token", checker.lastAccessToken)
+	}
+}
+
+func TestService_CopilotFallsBackToAccessTokenWhenRefreshTokenMissing(t *testing.T) {
+	ctx := context.Background()
+	logger := zap.NewNop()
+
+	profiles := []domaincredential.Profile{
+		{ID: "cred-1", Type: "copilot", AccountID: "gh-user", EncryptedProfile: "encrypted1"},
+	}
+
+	repo := &mockCredentialRepository{profiles: profiles}
+	encryptor := &mockEncryptor{
+		decrypted: `{"access_token":"copilot-session-token"}`,
+	}
+	checker := &mockProviderChecker{
+		result: domainquota.CheckResult{Healthy: true, CheckedAt: time.Now()},
+	}
+	cache := newMockStateCache()
+
+	svc := NewService(repo, encryptor, checker, cache, logger, DefaultServiceConfig())
+	if err := svc.CheckAll(ctx); err != nil {
+		t.Fatalf("CheckAll() error = %v", err)
+	}
+
+	if checker.lastAccessToken != "copilot-session-token" {
+		t.Fatalf("checker token = %q, want copilot-session-token", checker.lastAccessToken)
+	}
+}
+
+func TestService_CopilotMissingBothTokensMarksUnhealthy(t *testing.T) {
+	ctx := context.Background()
+	logger := zap.NewNop()
+
+	profiles := []domaincredential.Profile{{ID: "cred-1", Type: "copilot", EncryptedProfile: "encrypted1"}}
+	repo := &mockCredentialRepository{profiles: profiles}
+	encryptor := &mockEncryptor{decrypted: `{"account_id":"acct-1"}`}
+	checker := &mockProviderChecker{}
+	cache := newMockStateCache()
+
+	svc := NewService(repo, encryptor, checker, cache, logger, DefaultServiceConfig())
+	if err := svc.CheckAll(ctx); err != nil {
+		t.Fatalf("CheckAll() error = %v", err)
+	}
+
+	state := cache.states["cred-1"]
+	if state == nil {
+		t.Fatal("state not found")
+	}
+	if state.Status != domainquota.StatusUnhealthy {
+		t.Fatalf("status = %v, want unhealthy", state.Status)
+	}
+	if state.ErrorMessage != "missing_access_token" {
+		t.Fatalf("error_message = %q, want missing_access_token", state.ErrorMessage)
+	}
+}
+
 func TestService_MissingAccessTokenMarksUnhealthy(t *testing.T) {
 	ctx := context.Background()
 	logger := zap.NewNop()

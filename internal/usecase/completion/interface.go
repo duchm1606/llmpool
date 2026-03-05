@@ -62,6 +62,12 @@ type ExtendedCredentialProvider interface {
 	GetTokenWithInfo(ctx context.Context, providerID domainprovider.ProviderID) (token string, meta CredentialMetadata, err error)
 }
 
+// CredentialRefresher refreshes a selected credential on demand.
+// Used for inline recovery flows (for example, expired Copilot session token).
+type CredentialRefresher interface {
+	RefreshCredential(ctx context.Context, credentialID string) error
+}
+
 // ProviderClient executes requests to upstream providers.
 type ProviderClient interface {
 	// ChatCompletion executes a chat completion request.

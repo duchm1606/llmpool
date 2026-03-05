@@ -170,7 +170,7 @@ func main() {
 	var completionRouter usecasecompletion.Router
 	var providerRegistry usecasecompletion.ProviderRegistry
 	if cfg.Routing.Enabled {
-		completionService, completionRouter, providerRegistry = initCompletionService(cfg, profileRepo, encryptor, log)
+		completionService, completionRouter, providerRegistry = initCompletionService(cfg, profileRepo, encryptor, refreshService, log)
 		log.Info("completion routing enabled",
 			zap.Strings("provider_priority", cfg.Routing.ProviderPriority),
 			zap.Int("max_fallback_attempts", cfg.Routing.Fallback.MaxAttempts),
@@ -246,6 +246,7 @@ func initCompletionService(
 	cfg *configinfra.Config,
 	credRepo providerinfra.CredentialRepository,
 	decryptor providerinfra.CredentialDecryptor,
+	refreshService usecasecredential.RefreshService,
 	log *loggerinfra.Logger,
 ) (usecasecompletion.CompletionService, usecasecompletion.Router, usecasecompletion.ProviderRegistry) {
 	// Create pooled token fetcher for credential selection
@@ -326,7 +327,7 @@ func initCompletionService(
 		RequestTimeout:      cfg.Routing.RequestTimeout,
 	}
 	serviceLogger := loggerinfra.ForModule("usecase.completion.service")
-	completionSvc := usecasecompletion.NewService(router, registry, healthTracker, client, serviceConfig, serviceLogger)
+	completionSvc := usecasecompletion.NewService(router, registry, healthTracker, client, refreshService, serviceConfig, serviceLogger)
 
 	log.Info("completion service initialized with credential pool",
 		zap.Strings("provider_priority", cfg.Routing.ProviderPriority),

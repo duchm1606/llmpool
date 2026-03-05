@@ -20,6 +20,10 @@ func NewRefreshWorker(service usecasecredential.RefreshService, logger *loggerin
 }
 
 func (w *RefreshWorker) Start(ctx context.Context) {
+	if err := w.service.RefreshDue(ctx); err != nil {
+		w.logger.Error("refresh worker initial cycle failed", zap.Error(err))
+	}
+
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
 
