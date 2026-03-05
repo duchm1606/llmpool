@@ -7,16 +7,16 @@ import (
 
 	domaincredential "github.com/duchoang/llmpool/internal/domain/credential"
 	"github.com/duchoang/llmpool/internal/infra/credential/sqlcdb"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type PostgresRepository struct {
 	queries sqlcdb.Querier
 }
 
-func NewCredentialRepository(conn *pgx.Conn) *PostgresRepository {
-	return &PostgresRepository{queries: sqlcdb.New(conn)}
+func NewCredentialRepository(pool *pgxpool.Pool) *PostgresRepository {
+	return &PostgresRepository{queries: sqlcdb.New(pool)}
 }
 
 func (r *PostgresRepository) Save(ctx context.Context, profile domaincredential.Profile) (domaincredential.Profile, error) {

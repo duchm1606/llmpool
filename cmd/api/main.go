@@ -55,16 +55,12 @@ func main() {
 	}
 
 	healthService := usecasehealth.NewService()
-	postgresConn, err := postgresinfra.Connect(context.Background(), cfg.Postgres.DSN)
+	postgresPool, err := postgresinfra.Connect(context.Background(), cfg.Postgres.DSN)
 
 	if err != nil {
 		panic(fmt.Errorf("connect postgres: %w", err))
 	}
-	defer func() {
-		if closeErr := postgresConn.Close(context.Background()); closeErr != nil {
-			log.Error("close postgres connection", zap.Error(closeErr))
-		}
-	}()
+	defer postgresPool.Close()
 
 	redisClient, err := redisinfra.Connect(context.Background(), cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB)
 	if err != nil {
@@ -77,7 +73,7 @@ func main() {
 	}()
 	log.Info("redis connected", zap.String("addr", cfg.Redis.Addr))
 
-	profileRepo := credentialrepo.NewCredentialRepository(postgresConn)
+	profileRepo := credentialrepo.NewCredentialRepository(postgresPool)
 	importService := usecasecredential.NewImportService(profileRepo, encryptor)
 	oauthCompletionService := usecasecredential.NewCompletionService(profileRepo, encryptor)
 
