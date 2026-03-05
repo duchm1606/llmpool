@@ -70,8 +70,8 @@ func TestChatCompletionCopilot_PathAndHeaders(t *testing.T) {
 	if gotAuth != "Bearer copilot-token" {
 		t.Fatalf("unexpected auth header: got %q", gotAuth)
 	}
-	if gotInitiator != "user" {
-		t.Fatalf("unexpected X-Initiator: got %q, want %q", gotInitiator, "user")
+	if gotInitiator != "agent" {
+		t.Fatalf("unexpected X-Initiator: got %q, want %q", gotInitiator, "agent")
 	}
 	if gotVision != "true" {
 		t.Fatalf("unexpected Copilot-Vision-Request: got %q, want %q", gotVision, "true")

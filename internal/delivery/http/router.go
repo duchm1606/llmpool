@@ -34,6 +34,11 @@ type RouterDeps struct {
 
 	// Usage cache for usage endpoint (optional)
 	UsageCache handler.UsageCache
+
+	// Dependencies for Anthropic Messages API (optional)
+	// When set, enables the /v1/messages endpoint for Anthropic-compatible API
+	Router           usecasecompletion.Router
+	ProviderRegistry usecasecompletion.ProviderRegistry
 }
 
 func NewRouter(
@@ -150,6 +155,16 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 		// Models endpoints
 		r.GET("/v1/models", modelsHandler.ListModels)
 		r.GET("/v1/models/:model", modelsHandler.GetModel)
+	}
+
+	// Anthropic Messages API endpoint (proxies to Copilot)
+	// This endpoint accepts Anthropic Claude format and proxies to Copilot /responses
+	if deps.Router != nil && deps.ProviderRegistry != nil {
+		messagesLogger := loggerinfra.ForModule("delivery.http.handler.messages")
+		messagesHandler := handler.NewMessagesHandler(deps.Router, deps.ProviderRegistry, messagesLogger)
+
+		// Anthropic Messages API
+		r.POST("/v1/messages", messagesHandler.CreateMessage)
 	}
 
 	return r

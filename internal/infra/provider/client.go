@@ -1040,19 +1040,10 @@ func applyCodexHeaders(req *http.Request, decision domainprovider.RoutingDecisio
 
 // applyCopilotHeaders applies Copilot-specific headers to the HTTP request.
 // Headers are aligned with reference implementation (copilot-api api-config.ts copilotHeaders).
+// Always sets X-Initiator: agent for all requests to enable full agent capabilities.
 func applyCopilotHeaders(req *http.Request, decision domainprovider.RoutingDecision, chatReq domaincompletion.ChatCompletionRequest) {
 	// Check if vision is enabled (any message has image_url content)
 	enableVision := hasVisionContent(chatReq)
-
-	// Determine X-Initiator based on message roles
-	// If any message is from "assistant" or "tool", it's an agent call
-	isAgentCall := false
-	for _, msg := range chatReq.Messages {
-		if msg.Role == "assistant" || msg.Role == "tool" {
-			isAgentCall = true
-			break
-		}
-	}
 
 	// Set headers aligned with copilotHeaders in api-config.ts
 	req.Header.Set("Content-Type", "application/json")
@@ -1067,12 +1058,9 @@ func applyCopilotHeaders(req *http.Request, decision domainprovider.RoutingDecis
 	req.Header.Set("X-Request-Id", uuid.New().String())
 	req.Header.Set("X-Vscode-User-Agent-Library-Version", "electron-fetch")
 
-	// Set X-Initiator based on whether this is an agent or user call
-	if isAgentCall {
-		req.Header.Set("X-Initiator", "agent")
-	} else {
-		req.Header.Set("X-Initiator", "user")
-	}
+	// Always set X-Initiator to "agent" for all requests
+	// This enables full agent capabilities regardless of message content
+	req.Header.Set("X-Initiator", "agent")
 
 	// Set vision header if needed
 	if enableVision {

@@ -167,8 +167,10 @@ func main() {
 
 	// Initialize completion service if routing is enabled
 	var completionService usecasecompletion.CompletionService
+	var completionRouter usecasecompletion.Router
+	var providerRegistry usecasecompletion.ProviderRegistry
 	if cfg.Routing.Enabled {
-		completionService = initCompletionService(cfg, profileRepo, encryptor, log)
+		completionService, completionRouter, providerRegistry = initCompletionService(cfg, profileRepo, encryptor, log)
 		log.Info("completion routing enabled",
 			zap.Strings("provider_priority", cfg.Routing.ProviderPriority),
 			zap.Int("max_fallback_attempts", cfg.Routing.Fallback.MaxAttempts),
@@ -189,7 +191,9 @@ func main() {
 		CopilotOAuthProvider:          copilotProvider,
 		CopilotOAuthSessionTTL:        cfg.OAuth.Copilot.SessionTTL,
 		CopilotOAuthCompletionService: copilotOAuthCompletionService,
-		UsageCache:                    quotaStateCache, // For usage endpoint
+		UsageCache:                    quotaStateCache,  // For usage endpoint
+		Router:                        completionRouter, // For Anthropic Messages API
+		ProviderRegistry:              providerRegistry, // For Anthropic Messages API
 	})
 
 	httpServer := server.NewHTTPServer(cfg.Server, router)
@@ -237,12 +241,13 @@ func main() {
 }
 
 // initCompletionService initializes the completion routing service.
+// Returns the completion service, router, and provider registry.
 func initCompletionService(
 	cfg *configinfra.Config,
 	credRepo providerinfra.CredentialRepository,
 	decryptor providerinfra.CredentialDecryptor,
 	log *loggerinfra.Logger,
-) usecasecompletion.CompletionService {
+) (usecasecompletion.CompletionService, usecasecompletion.Router, usecasecompletion.ProviderRegistry) {
 	// Create pooled token fetcher for credential selection
 	tokenFetcherLogger := loggerinfra.ForModule("infra.provider.token_fetcher")
 	tokenFetcherConfig := providerinfra.PooledTokenFetcherConfig{
@@ -327,5 +332,5 @@ func initCompletionService(
 		zap.Strings("provider_priority", cfg.Routing.ProviderPriority),
 	)
 
-	return completionSvc
+	return completionSvc, router, registry
 }
