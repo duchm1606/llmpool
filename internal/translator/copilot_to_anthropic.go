@@ -27,11 +27,13 @@ type CopilotToAnthropicStreamState struct {
 	// Track content blocks
 	CurrentBlockIndex int
 	BlockStarted      map[int]bool
-	BlockType         map[int]string // "text" or "tool_use"
+	BlockType         map[int]string // "text", "tool_use", or "thinking"
 	ToolCallIDs       map[int]string
 	ToolCallNames     map[int]string
+	ToolIndexToBlock  map[int]int
 	TextAccumulator   map[int]*strings.Builder
 	JSONAccumulator   map[int]*strings.Builder
+	JSONEmittedBytes  map[int]int
 
 	// Track overall state
 	Started    bool
@@ -42,22 +44,30 @@ type CopilotToAnthropicStreamState struct {
 	FinalEventsEmitted bool
 	// Track closed blocks to avoid duplicate content_block_stop
 	BlockClosed map[int]bool
+
+	// Thinking block tracking
+	ThinkingBlockOpen  bool
+	ThinkingBlockIndex int
+	ContentBlockOpen   bool // Tracks if a non-thinking content block is open
 }
 
 // NewCopilotToAnthropicStreamState creates a new stream state tracker.
 func NewCopilotToAnthropicStreamState(model string) *CopilotToAnthropicStreamState {
 	return &CopilotToAnthropicStreamState{
-		MessageID:         fmt.Sprintf("msg_%s", uuid.New().String()[:24]),
-		Model:             model,
-		Created:           time.Now().Unix(),
-		CurrentBlockIndex: -1,
-		BlockStarted:      make(map[int]bool),
-		BlockType:         make(map[int]string),
-		ToolCallIDs:       make(map[int]string),
-		ToolCallNames:     make(map[int]string),
-		TextAccumulator:   make(map[int]*strings.Builder),
-		JSONAccumulator:   make(map[int]*strings.Builder),
-		BlockClosed:       make(map[int]bool),
+		MessageID:          fmt.Sprintf("msg_%s", uuid.New().String()[:24]),
+		Model:              model,
+		Created:            time.Now().Unix(),
+		CurrentBlockIndex:  -1,
+		BlockStarted:       make(map[int]bool),
+		BlockType:          make(map[int]string),
+		ToolCallIDs:        make(map[int]string),
+		ToolCallNames:      make(map[int]string),
+		ToolIndexToBlock:   make(map[int]int),
+		TextAccumulator:    make(map[int]*strings.Builder),
+		JSONAccumulator:    make(map[int]*strings.Builder),
+		JSONEmittedBytes:   make(map[int]int),
+		BlockClosed:        make(map[int]bool),
+		ThinkingBlockIndex: -1,
 	}
 }
 
@@ -89,24 +99,30 @@ func (s *CopilotToAnthropicStreamState) ConvertCopilotEventToAnthropic(eventData
 		}
 
 	case "response.output_item.added":
-		// New output item (text or function_call)
+		// New output item (text, function_call, or reasoning)
 		item, ok := root["item"].(map[string]any)
 		if !ok {
 			return events
 		}
 
 		itemType, _ := item["type"].(string)
-		s.CurrentBlockIndex++
-		idx := s.CurrentBlockIndex
+		outputIndex := -1
+		if idx, ok := asInt(root["output_index"]); ok {
+			outputIndex = idx
+		}
 
 		switch itemType {
 		case "message":
 			// Text content - will be populated by response.output_text.delta
+			s.CurrentBlockIndex++
+			idx := s.CurrentBlockIndex
 			s.BlockType[idx] = "text"
 			s.BlockStarted[idx] = false
 
 		case "function_call":
 			// Tool use
+			s.CurrentBlockIndex++
+			idx := s.CurrentBlockIndex
 			s.BlockType[idx] = "tool_use"
 			s.ToolCallIDs[idx], _ = item["call_id"].(string)
 			if s.ToolCallIDs[idx] == "" {
@@ -114,6 +130,14 @@ func (s *CopilotToAnthropicStreamState) ConvertCopilotEventToAnthropic(eventData
 			}
 			s.ToolCallNames[idx], _ = item["name"].(string)
 			s.BlockStarted[idx] = false
+			if outputIndex >= 0 {
+				s.ToolIndexToBlock[outputIndex] = idx
+			}
+
+		case "reasoning":
+			// Reasoning/thinking output - handled differently from message/function_call
+			// The actual content comes via response.reasoning_summary_text.delta
+			// We'll create the block when we receive the first delta
 		}
 
 	case "response.content_part.added":
@@ -154,11 +178,24 @@ func (s *CopilotToAnthropicStreamState) ConvertCopilotEventToAnthropic(eventData
 			return events
 		}
 
-		// Find current tool_use block
-		idx := s.findCurrentToolBlock()
+		// Find current tool_use block. Prefer explicit output_index mapping when available.
+		idx := -1
+		if outputIndex, ok := asInt(root["output_index"]); ok {
+			if mapped, exists := s.ToolIndexToBlock[outputIndex]; exists {
+				idx = mapped
+			}
+		}
+		if idx < 0 {
+			idx = s.findCurrentToolBlock()
+		}
 		if idx < 0 {
 			return events
 		}
+
+		if s.JSONAccumulator[idx] == nil {
+			s.JSONAccumulator[idx] = &strings.Builder{}
+		}
+		_, _ = s.JSONAccumulator[idx].WriteString(delta)
 
 		// Emit content_block_start if needed
 		if !s.BlockStarted[idx] {
@@ -166,12 +203,9 @@ func (s *CopilotToAnthropicStreamState) ConvertCopilotEventToAnthropic(eventData
 			events = append(events, s.formatContentBlockStart(idx, "tool_use", s.ToolCallIDs[idx], s.ToolCallNames[idx]))
 		}
 
-		// Emit input_json_delta
-		events = append(events, s.formatInputJSONDelta(idx, delta))
-		if s.JSONAccumulator[idx] == nil {
-			s.JSONAccumulator[idx] = &strings.Builder{}
+		if jsonDelta := s.flushPendingInputJSONDelta(idx); jsonDelta != "" {
+			events = append(events, jsonDelta)
 		}
-		_, _ = s.JSONAccumulator[idx].WriteString(delta)
 
 	case "response.output_text.done":
 		// Text block complete
@@ -187,9 +221,65 @@ func (s *CopilotToAnthropicStreamState) ConvertCopilotEventToAnthropic(eventData
 			events = append(events, s.formatContentBlockStop(idx))
 		}
 
+	case "response.reasoning_summary_text.delta":
+		// Reasoning text delta - equivalent to thinking_delta
+		delta, _ := root["delta"].(string)
+		if delta == "" {
+			return events
+		}
+
+		// Find or create thinking block
+		if !s.ThinkingBlockOpen {
+			s.CurrentBlockIndex++
+			idx := s.CurrentBlockIndex
+			s.BlockType[idx] = "thinking"
+			s.BlockStarted[idx] = true
+			s.ThinkingBlockIndex = idx
+			s.ThinkingBlockOpen = true
+			events = append(events, s.formatThinkingBlockStart(idx))
+		}
+
+		// Emit thinking_delta
+		events = append(events, s.formatThinkingDelta(s.ThinkingBlockIndex, delta))
+
+	case "response.reasoning_summary_text.done":
+		// Reasoning text complete - no action needed, block will be closed by output_item.done
+
 	case "response.output_item.done":
-		// Output item complete
-		// The block stop is already handled by the specific done events
+		// Output item complete - handle reasoning signature
+		item, ok := root["item"].(map[string]any)
+		if !ok {
+			return events
+		}
+
+		itemType, _ := item["type"].(string)
+		if itemType == "reasoning" {
+			// Build signature from encrypted_content and id
+			encryptedContent, _ := item["encrypted_content"].(string)
+			id, _ := item["id"].(string)
+			signature := encryptedContent + "@" + id
+
+			// Find or create thinking block if not yet open
+			if !s.ThinkingBlockOpen {
+				s.CurrentBlockIndex++
+				idx := s.CurrentBlockIndex
+				s.BlockType[idx] = "thinking"
+				s.BlockStarted[idx] = true
+				s.ThinkingBlockIndex = idx
+				s.ThinkingBlockOpen = true
+				events = append(events, s.formatThinkingBlockStart(idx))
+
+				// Add placeholder thinking text (compatible with opencode)
+				events = append(events, s.formatThinkingDelta(idx, ThinkingTextPlaceholder))
+			}
+
+			// Emit signature_delta and close block
+			if signature != "@" { // Only if there's actual content
+				events = append(events, s.formatSignatureDelta(s.ThinkingBlockIndex, signature))
+			}
+			events = append(events, s.formatContentBlockStop(s.ThinkingBlockIndex))
+			s.ThinkingBlockOpen = false
+		}
 
 	case "response.completed":
 		// Response complete
@@ -314,19 +404,21 @@ func (s *CopilotToAnthropicStreamState) formatMessageStart() string {
 }
 
 func (s *CopilotToAnthropicStreamState) formatContentBlockStart(index int, blockType, toolID, toolName string) string {
-	var contentBlock *anthropic.ContentBlockPayload
+	// Build content_block as a map to control exactly which fields appear.
+	// Using a struct with omitempty would drop required fields like "text":"".
+	var contentBlock any
 	switch blockType {
 	case "text":
-		contentBlock = &anthropic.ContentBlockPayload{
-			Type: "text",
-			Text: "",
+		contentBlock = map[string]any{
+			"type": "text",
+			"text": "",
 		}
 	case "tool_use":
-		contentBlock = &anthropic.ContentBlockPayload{
-			Type:  "tool_use",
-			ID:    toolID,
-			Name:  toolName,
-			Input: map[string]any{},
+		contentBlock = map[string]any{
+			"type":  "tool_use",
+			"id":    toolID,
+			"name":  toolName,
+			"input": map[string]any{},
 		}
 	}
 
@@ -436,6 +528,9 @@ func (s *CopilotToAnthropicStreamState) Finalize() []string {
 
 	events := make([]string, 0)
 
+	// Close any open thinking block first
+	events = append(events, s.closeThinkingBlockIfOpen()...)
+
 	// Close any open blocks that haven't been closed yet
 	for idx, started := range s.BlockStarted {
 		if started && !s.BlockClosed[idx] {
@@ -466,9 +561,11 @@ func (s *CopilotToAnthropicStreamState) ConvertChatCompletionEventToAnthropic(ev
 		Choices []struct {
 			Index int `json:"index"`
 			Delta struct {
-				Role      string `json:"role,omitempty"`
-				Content   string `json:"content,omitempty"`
-				ToolCalls []struct {
+				Role            string `json:"role,omitempty"`
+				Content         string `json:"content,omitempty"`
+				ReasoningText   string `json:"reasoning_text,omitempty"`   // Extended thinking text
+				ReasoningOpaque string `json:"reasoning_opaque,omitempty"` // Signature for thinking
+				ToolCalls       []struct {
 					Index    int    `json:"index"`
 					ID       string `json:"id,omitempty"`
 					Type     string `json:"type,omitempty"`
@@ -538,13 +635,34 @@ func (s *CopilotToAnthropicStreamState) ConvertChatCompletionEventToAnthropic(ev
 	choice := chunk.Choices[0]
 	delta := choice.Delta
 
+	// Handle reasoning_text (thinking deltas)
+	if delta.ReasoningText != "" {
+		// Edge case: if content block is already open (abnormal server behavior),
+		// treat reasoning_text as regular content
+		if s.ContentBlockOpen {
+			delta.Content = delta.ReasoningText
+			delta.ReasoningText = ""
+		} else {
+			events = append(events, s.handleThinkingText(delta.ReasoningText)...)
+		}
+	}
+
 	// Handle text content
 	if delta.Content != "" {
+		// Close thinking block if open before starting text content
+		events = append(events, s.closeThinkingBlockIfOpen()...)
+
+		// Check if a tool block was open - close it first
+		if s.isToolBlockOpen() {
+			events = append(events, s.closeCurrentBlock()...)
+		}
+
 		idx := s.findOrCreateTextBlock()
 
 		// Emit content_block_start if needed
 		if !s.BlockStarted[idx] {
 			s.BlockStarted[idx] = true
+			s.ContentBlockOpen = true
 			events = append(events, s.formatContentBlockStart(idx, "text", "", ""))
 		}
 
@@ -556,7 +674,27 @@ func (s *CopilotToAnthropicStreamState) ConvertChatCompletionEventToAnthropic(ev
 		_, _ = s.TextAccumulator[idx].WriteString(delta.Content)
 	}
 
+	// Handle signature at end of thinking (when content is empty but reasoning_opaque exists)
+	if delta.Content == "" && delta.ReasoningOpaque != "" && s.ThinkingBlockOpen {
+		events = append(events, s.formatSignatureDelta(s.ThinkingBlockIndex, delta.ReasoningOpaque))
+		events = append(events, s.formatContentBlockStop(s.ThinkingBlockIndex))
+		s.ThinkingBlockOpen = false
+	}
+
 	// Handle tool calls
+	if len(delta.ToolCalls) > 0 {
+		// Close thinking block before tool calls
+		events = append(events, s.closeThinkingBlockIfOpen()...)
+
+		// Close non-tool content block if open
+		if s.ContentBlockOpen && !s.isToolBlockOpen() {
+			events = append(events, s.closeCurrentBlock()...)
+		}
+
+		// Handle reasoning_opaque within tool calls context (opaque thinking block)
+		events = append(events, s.handleReasoningOpaque(delta.ReasoningOpaque)...)
+	}
+
 	for _, tc := range delta.ToolCalls {
 		// Find or create tool block for this index
 		toolBlockIdx := s.findOrCreateToolBlockByIndex(tc.Index)
@@ -569,25 +707,39 @@ func (s *CopilotToAnthropicStreamState) ConvertChatCompletionEventToAnthropic(ev
 			s.ToolCallNames[toolBlockIdx] = tc.Function.Name
 		}
 
-		// Emit content_block_start if we have ID and name and haven't started
-		if !s.BlockStarted[toolBlockIdx] && s.ToolCallIDs[toolBlockIdx] != "" && s.ToolCallNames[toolBlockIdx] != "" {
-			s.BlockStarted[toolBlockIdx] = true
-			events = append(events, s.formatContentBlockStart(toolBlockIdx, "tool_use", s.ToolCallIDs[toolBlockIdx], s.ToolCallNames[toolBlockIdx]))
-		}
-
-		// Emit argument delta if present
-		if tc.Function.Arguments != "" && s.BlockStarted[toolBlockIdx] {
-			events = append(events, s.formatInputJSONDelta(toolBlockIdx, tc.Function.Arguments))
+		if tc.Function.Arguments != "" {
 			if s.JSONAccumulator[toolBlockIdx] == nil {
 				s.JSONAccumulator[toolBlockIdx] = &strings.Builder{}
 			}
 			_, _ = s.JSONAccumulator[toolBlockIdx].WriteString(tc.Function.Arguments)
+		}
+
+		// Emit content_block_start if we have ID and name and haven't started
+		if !s.BlockStarted[toolBlockIdx] && s.ToolCallIDs[toolBlockIdx] != "" && s.ToolCallNames[toolBlockIdx] != "" {
+			s.BlockStarted[toolBlockIdx] = true
+			s.ContentBlockOpen = true
+			events = append(events, s.formatContentBlockStart(toolBlockIdx, "tool_use", s.ToolCallIDs[toolBlockIdx], s.ToolCallNames[toolBlockIdx]))
+		}
+
+		if s.BlockStarted[toolBlockIdx] {
+			if jsonDelta := s.flushPendingInputJSONDelta(toolBlockIdx); jsonDelta != "" {
+				events = append(events, jsonDelta)
+			}
 		}
 	}
 
 	// Handle finish_reason
 	if choice.FinishReason != nil {
 		s.Completed = true
+
+		// Close any open content blocks first
+		if s.ContentBlockOpen {
+			events = append(events, s.closeCurrentBlock()...)
+			// Handle reasoning_opaque after closing non-tool block
+			if !s.isToolBlockOpen() {
+				events = append(events, s.handleReasoningOpaque(delta.ReasoningOpaque)...)
+			}
+		}
 
 		// Close any open text blocks that aren't already closed
 		for idx, started := range s.BlockStarted {
@@ -599,6 +751,13 @@ func (s *CopilotToAnthropicStreamState) ConvertChatCompletionEventToAnthropic(ev
 		// Close any open tool blocks that aren't already closed
 		for idx, started := range s.BlockStarted {
 			if started && s.BlockType[idx] == "tool_use" && !s.BlockClosed[idx] {
+				events = append(events, s.formatContentBlockStop(idx))
+			}
+		}
+
+		// Close any open thinking blocks that aren't already closed
+		for idx, started := range s.BlockStarted {
+			if started && s.BlockType[idx] == "thinking" && !s.BlockClosed[idx] {
 				events = append(events, s.formatContentBlockStop(idx))
 			}
 		}
@@ -631,23 +790,140 @@ func (s *CopilotToAnthropicStreamState) ConvertChatCompletionEventToAnthropic(ev
 	return events
 }
 
+// handleThinkingText handles reasoning_text deltas and emits thinking block events.
+func (s *CopilotToAnthropicStreamState) handleThinkingText(text string) []string {
+	events := make([]string, 0)
+
+	if !s.ThinkingBlockOpen {
+		// Start a new thinking block
+		s.CurrentBlockIndex++
+		idx := s.CurrentBlockIndex
+		s.BlockType[idx] = "thinking"
+		s.BlockStarted[idx] = true
+		s.ThinkingBlockIndex = idx
+		s.ThinkingBlockOpen = true
+
+		events = append(events, s.formatThinkingBlockStart(idx))
+	}
+
+	// Emit thinking_delta
+	events = append(events, s.formatThinkingDelta(s.ThinkingBlockIndex, text))
+	return events
+}
+
+// handleReasoningOpaque emits an opaque thinking block (with placeholder text and signature).
+func (s *CopilotToAnthropicStreamState) handleReasoningOpaque(opaque string) []string {
+	if opaque == "" {
+		return nil
+	}
+
+	events := make([]string, 0)
+
+	// Create a complete thinking block with placeholder text and signature
+	s.CurrentBlockIndex++
+	idx := s.CurrentBlockIndex
+	s.BlockType[idx] = "thinking"
+	s.BlockStarted[idx] = true
+
+	events = append(events, s.formatThinkingBlockStart(idx))
+	events = append(events, s.formatThinkingDelta(idx, ThinkingTextPlaceholder))
+	events = append(events, s.formatSignatureDelta(idx, opaque))
+	events = append(events, s.formatContentBlockStop(idx))
+
+	return events
+}
+
+// closeThinkingBlockIfOpen closes the current thinking block if one is open.
+func (s *CopilotToAnthropicStreamState) closeThinkingBlockIfOpen() []string {
+	if !s.ThinkingBlockOpen {
+		return nil
+	}
+
+	events := make([]string, 0)
+	// Emit empty signature_delta before closing (for completeness)
+	events = append(events, s.formatSignatureDelta(s.ThinkingBlockIndex, ""))
+	events = append(events, s.formatContentBlockStop(s.ThinkingBlockIndex))
+	s.ThinkingBlockOpen = false
+
+	return events
+}
+
+// closeCurrentBlock closes the current content block (non-thinking).
+func (s *CopilotToAnthropicStreamState) closeCurrentBlock() []string {
+	if !s.ContentBlockOpen {
+		return nil
+	}
+
+	events := make([]string, 0)
+	events = append(events, s.formatContentBlockStop(s.CurrentBlockIndex))
+	s.ContentBlockOpen = false
+	s.CurrentBlockIndex++
+
+	return events
+}
+
+// isToolBlockOpen checks if the current open block is a tool block.
+func (s *CopilotToAnthropicStreamState) isToolBlockOpen() bool {
+	if !s.ContentBlockOpen {
+		return false
+	}
+	// Check if any tool call maps to the current block index
+	for _, toolIdx := range s.ToolIndexToBlock {
+		if toolIdx == s.CurrentBlockIndex {
+			return true
+		}
+	}
+	return false
+}
+
+// formatThinkingBlockStart formats a thinking block start event.
+func (s *CopilotToAnthropicStreamState) formatThinkingBlockStart(index int) string {
+	contentBlock := map[string]any{
+		"type":     "thinking",
+		"thinking": "",
+	}
+
+	event := anthropic.ContentBlockStartEvent{
+		Type:         "content_block_start",
+		Index:        index,
+		ContentBlock: contentBlock,
+	}
+	data, _ := json.Marshal(event)
+	return fmt.Sprintf("event: content_block_start\ndata: %s\n\n", data)
+}
+
+// formatThinkingDelta formats a thinking delta event.
+func (s *CopilotToAnthropicStreamState) formatThinkingDelta(index int, thinking string) string {
+	event := anthropic.ContentBlockDeltaEvent{
+		Type:  "content_block_delta",
+		Index: index,
+		Delta: &anthropic.Delta{
+			Type:     "thinking_delta",
+			Thinking: thinking,
+		},
+	}
+	data, _ := json.Marshal(event)
+	return fmt.Sprintf("event: content_block_delta\ndata: %s\n\n", data)
+}
+
+// formatSignatureDelta formats a signature delta event.
+func (s *CopilotToAnthropicStreamState) formatSignatureDelta(index int, signature string) string {
+	event := anthropic.ContentBlockDeltaEvent{
+		Type:  "content_block_delta",
+		Index: index,
+		Delta: &anthropic.Delta{
+			Type:      "signature_delta",
+			Signature: signature,
+		},
+	}
+	data, _ := json.Marshal(event)
+	return fmt.Sprintf("event: content_block_delta\ndata: %s\n\n", data)
+}
+
 // findOrCreateToolBlockByIndex finds or creates a tool block for a specific tool call index.
 func (s *CopilotToAnthropicStreamState) findOrCreateToolBlockByIndex(toolIndex int) int {
-	// Map tool index to block index (offset by number of text blocks + 1)
-	// This is a simple mapping strategy
-	for idx, t := range s.BlockType {
-		if t == "tool_use" {
-			// Check if this is the right tool block based on position
-			toolCount := 0
-			for i := 0; i <= idx; i++ {
-				if s.BlockType[i] == "tool_use" {
-					if toolCount == toolIndex {
-						return i
-					}
-					toolCount++
-				}
-			}
-		}
+	if idx, ok := s.ToolIndexToBlock[toolIndex]; ok {
+		return idx
 	}
 
 	// Create new tool block
@@ -655,5 +931,36 @@ func (s *CopilotToAnthropicStreamState) findOrCreateToolBlockByIndex(toolIndex i
 	idx := s.CurrentBlockIndex
 	s.BlockType[idx] = "tool_use"
 	s.BlockStarted[idx] = false
+	s.ToolIndexToBlock[toolIndex] = idx
 	return idx
+}
+
+func (s *CopilotToAnthropicStreamState) flushPendingInputJSONDelta(index int) string {
+	b := s.JSONAccumulator[index]
+	if b == nil {
+		return ""
+	}
+
+	all := b.String()
+	sent := s.JSONEmittedBytes[index]
+	if sent >= len(all) {
+		return ""
+	}
+
+	pending := all[sent:]
+	s.JSONEmittedBytes[index] = len(all)
+	return s.formatInputJSONDelta(index, pending)
+}
+
+func asInt(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case float64:
+		return int(n), true
+	default:
+		return 0, false
+	}
 }

@@ -40,8 +40,8 @@ func AnthropicToChatCompletion(req *anthropic.MessagesRequest) ([]byte, error) {
 	for _, msg := range req.Messages {
 		switch msg.Role {
 		case "user":
-			chatMsg := convertUserMessageToChat(msg)
-			messages = append(messages, chatMsg)
+			chatMsgs := convertUserMessageToChat(msg)
+			messages = append(messages, chatMsgs...)
 		case "assistant":
 			// Assistant messages may contain text and tool_use blocks
 			chatMsgs := convertAssistantMessageToChat(msg)
@@ -91,7 +91,8 @@ func AnthropicToChatCompletion(req *anthropic.MessagesRequest) ([]byte, error) {
 }
 
 // convertUserMessageToChat converts an Anthropic user message to OpenAI chat format.
-func convertUserMessageToChat(msg anthropic.Message) domaincompletion.Message {
+// Tool results are emitted as separate role=tool messages before any user content.
+func convertUserMessageToChat(msg anthropic.Message) []domaincompletion.Message {
 	// Check if any content blocks are non-text (images, tool_result)
 	hasComplexContent := false
 	for _, block := range msg.Content {
@@ -103,10 +104,10 @@ func convertUserMessageToChat(msg anthropic.Message) domaincompletion.Message {
 
 	// Simple text-only message
 	if !hasComplexContent && len(msg.Content) == 1 {
-		return domaincompletion.Message{
+		return []domaincompletion.Message{{
 			Role:    "user",
 			Content: msg.Content[0].Text,
-		}
+		}}
 	}
 
 	// Complex content - build content parts array
@@ -145,16 +146,15 @@ func convertUserMessageToChat(msg anthropic.Message) domaincompletion.Message {
 		}
 	}
 
-	// If we only have tool results, return a placeholder and the tool results will be handled separately
+	// If we only have tool results, return just tool messages.
 	if len(contentParts) == 0 && len(toolResults) > 0 {
-		// This shouldn't happen normally - tool_result should be the only content
-		// Return the first tool result as the message
-		if len(toolResults) > 0 {
-			return toolResults[0]
-		}
+		return toolResults
 	}
 
-	// Build the message with content parts
+	result := make([]domaincompletion.Message, 0, len(toolResults)+1)
+	result = append(result, toolResults...)
+
+	// Build the user message with content parts
 	chatMsg := domaincompletion.Message{
 		Role: "user",
 	}
@@ -165,7 +165,15 @@ func convertUserMessageToChat(msg anthropic.Message) domaincompletion.Message {
 		chatMsg.Content = contentParts
 	}
 
-	return chatMsg
+	if len(contentParts) > 0 {
+		result = append(result, chatMsg)
+	}
+
+	if len(result) == 0 {
+		result = append(result, domaincompletion.Message{Role: "user", Content: ""})
+	}
+
+	return result
 }
 
 // convertToolResultToChat converts an Anthropic tool_result to OpenAI tool message.

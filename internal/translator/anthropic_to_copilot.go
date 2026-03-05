@@ -13,8 +13,9 @@ import (
 // The Copilot Responses API uses a structure similar to OpenAI's Responses API.
 func AnthropicToCopilotResponses(req *anthropic.MessagesRequest) ([]byte, error) {
 	payload := map[string]any{
-		"model": req.Model,
-		"store": false,
+		"model":               req.Model,
+		"store":               false,
+		"parallel_tool_calls": true,
 	}
 
 	if req.Stream {
@@ -38,9 +39,9 @@ func AnthropicToCopilotResponses(req *anthropic.MessagesRequest) ([]byte, error)
 	for _, msg := range req.Messages {
 		switch msg.Role {
 		case "user":
-			input = append(input, convertUserMessage(msg))
+			input = append(input, convertUserMessage(msg)...)
 		case "assistant":
-			// Assistant messages may contain text and tool_use blocks
+			// Assistant messages may contain text, tool_use, and thinking blocks
 			input = append(input, convertAssistantMessage(msg)...)
 		}
 	}
@@ -51,8 +52,9 @@ func AnthropicToCopilotResponses(req *anthropic.MessagesRequest) ([]byte, error)
 		tools := make([]any, 0, len(req.Tools))
 		for _, t := range req.Tools {
 			tool := map[string]any{
-				"type": "function",
-				"name": t.Name,
+				"type":   "function",
+				"name":   t.Name,
+				"strict": false,
 			}
 			if t.Description != "" {
 				tool["description"] = t.Description
@@ -70,26 +72,57 @@ func AnthropicToCopilotResponses(req *anthropic.MessagesRequest) ([]byte, error)
 		payload["tool_choice"] = convertToolChoice(req.ToolChoice)
 	}
 
-	// Temperature and other params
-	if req.Temperature != nil {
+	// Temperature - for reasoning models, fix to 1
+	if req.Thinking != nil && (req.Thinking.Type == "enabled" || req.Thinking.Type == "adaptive") {
+		payload["temperature"] = 1
+	} else if req.Temperature != nil {
 		payload["temperature"] = *req.Temperature
 	}
+
 	if req.TopP != nil {
 		payload["top_p"] = *req.TopP
 	}
-	if req.MaxTokens > 0 {
-		payload["max_output_tokens"] = req.MaxTokens
+
+	// Max output tokens - ensure minimum for reasoning
+	maxTokens := req.MaxTokens
+	if maxTokens > 0 {
+		if maxTokens < 12800 {
+			maxTokens = 12800 // Minimum for reasoning models
+		}
+		payload["max_output_tokens"] = maxTokens
 	}
+
 	if req.Metadata != nil && req.Metadata.UserID != "" {
 		payload["user"] = req.Metadata.UserID
+	}
+
+	// Add reasoning config for models that support it
+	if req.Thinking != nil || req.OutputConfig != nil {
+		reasoning := map[string]any{
+			"summary": "detailed",
+		}
+
+		// Determine effort level
+		var effort string
+		if req.OutputConfig != nil && req.OutputConfig.Effort != "" {
+			effort = req.OutputConfig.Effort
+		} else {
+			effort = GetEffortForModel(req.Model)
+		}
+		reasoning["effort"] = effort
+
+		payload["reasoning"] = reasoning
+		payload["include"] = []string{"reasoning.encrypted_content"}
 	}
 
 	return json.Marshal(payload)
 }
 
 // convertUserMessage converts an Anthropic user message to Copilot input format.
-func convertUserMessage(msg anthropic.Message) map[string]any {
+// Tool results are emitted as function_call_output items before any user message item.
+func convertUserMessage(msg anthropic.Message) []any {
 	content := make([]map[string]any, 0, len(msg.Content))
+	result := make([]any, 0, len(msg.Content)+1)
 
 	for _, block := range msg.Content {
 		switch block.Type {
@@ -116,23 +149,31 @@ func convertUserMessage(msg anthropic.Message) map[string]any {
 				}
 			}
 		case "tool_result":
-			// Tool results become function_call_output items at the top level
-			// We'll handle these separately
+			result = append(result, ConvertToolResultToFunctionOutput(block))
 		}
 	}
 
-	// Check for tool_result blocks - they need to be converted to function_call_output
-	// and returned separately, but for simplicity we include inline
-	// Actually, tool_result in user messages should be separate input items
-	return map[string]any{
-		"type":    "message",
-		"role":    "user",
-		"content": content,
+	if len(content) > 0 {
+		result = append(result, map[string]any{
+			"type":    "message",
+			"role":    "user",
+			"content": content,
+		})
 	}
+
+	if len(result) == 0 {
+		result = append(result, map[string]any{
+			"type":    "message",
+			"role":    "user",
+			"content": []map[string]any{},
+		})
+	}
+
+	return result
 }
 
 // convertAssistantMessage converts an Anthropic assistant message to Copilot input format.
-// This may return multiple input items (message + function_calls).
+// This may return multiple input items (message + function_calls + reasoning).
 func convertAssistantMessage(msg anthropic.Message) []any {
 	result := make([]any, 0, len(msg.Content))
 	textContent := make([]map[string]any, 0)
@@ -144,6 +185,23 @@ func convertAssistantMessage(msg anthropic.Message) []any {
 				"type": "output_text",
 				"text": block.Text,
 			})
+		case "thinking":
+			// Handle thinking blocks - only if signature contains "@" (GPT format)
+			if block.Signature != "" && strings.Contains(block.Signature, "@") {
+				// Flush any accumulated text content first
+				if len(textContent) > 0 {
+					result = append(result, map[string]any{
+						"type":    "message",
+						"role":    "assistant",
+						"content": textContent,
+					})
+					textContent = make([]map[string]any, 0)
+				}
+
+				// Convert thinking to reasoning content
+				result = append(result, convertThinkingToReasoning(block))
+			}
+			// Skip non-GPT thinking blocks (Claude native thinking)
 		case "tool_use":
 			// Add any accumulated text content first
 			if len(textContent) > 0 {
@@ -167,6 +225,7 @@ func convertAssistantMessage(msg anthropic.Message) []any {
 				"call_id":   block.ID,
 				"name":      block.Name,
 				"arguments": args,
+				"status":    "completed",
 			})
 		}
 	}
@@ -181,6 +240,47 @@ func convertAssistantMessage(msg anthropic.Message) []any {
 	}
 
 	return result
+}
+
+// convertThinkingToReasoning converts an Anthropic thinking block to Copilot reasoning format.
+// The signature format is "encrypted_content@id" for GPT models.
+func convertThinkingToReasoning(block anthropic.ContentBlock) map[string]any {
+	// Parse signature@id format
+	parts := strings.SplitN(block.Signature, "@", 2)
+	encryptedContent := parts[0]
+	var id string
+	if len(parts) > 1 {
+		id = parts[1]
+	}
+
+	// Clean up thinking text - if it's the placeholder, use empty
+	thinking := block.Thinking
+	if thinking == ThinkingTextPlaceholder {
+		thinking = ""
+	}
+
+	reasoning := map[string]any{
+		"type":              "reasoning",
+		"encrypted_content": encryptedContent,
+	}
+
+	if id != "" {
+		reasoning["id"] = id
+	}
+
+	// Add summary if thinking text is present
+	if thinking != "" {
+		reasoning["summary"] = []map[string]any{
+			{
+				"type": "summary_text",
+				"text": thinking,
+			},
+		}
+	} else {
+		reasoning["summary"] = []map[string]any{}
+	}
+
+	return reasoning
 }
 
 // convertToolChoice converts Anthropic tool_choice to Copilot format.

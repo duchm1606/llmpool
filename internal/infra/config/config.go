@@ -22,6 +22,7 @@ type Config struct {
 	OAuth        OAuthConfig               `mapstructure:"oauth"`
 	Liveness     LivenessConfig            `mapstructure:"liveness"`
 	Routing      RoutingConfig             `mapstructure:"routing"`
+	MessagesAPI  MessagesAPIConfig         `mapstructure:"messages_api"`
 	Providers    map[string]ProviderConfig `mapstructure:"providers"`
 }
 
@@ -150,6 +151,23 @@ type ProviderConfig struct {
 	// When true, GPT-5+ models (except gpt-5-mini) use /responses instead of /chat/completions.
 	// This mirrors opencode reference behavior. Default: false for safe rollout.
 	EnableResponsesRouting bool `mapstructure:"enable_responses_routing"`
+}
+
+// MessagesAPIConfig holds configuration for the Anthropic-style Messages API adapter.
+type MessagesAPIConfig struct {
+	// SmallModel is the model to use for compact/summarization requests.
+	// If empty, compact requests use the originally requested model.
+	// Example: "gpt-4o-mini" or "claude-3-haiku"
+	SmallModel string `mapstructure:"small_model"`
+
+	// DefaultReasoningEffort is the default reasoning effort for models that support adaptive thinking.
+	// Valid values: "low", "medium", "high", "max"
+	// Default: "medium"
+	DefaultReasoningEffort string `mapstructure:"default_reasoning_effort"`
+
+	// CompactUseSmallModel controls whether compact/summarization requests use SmallModel.
+	// Default: false (use originally requested model)
+	CompactUseSmallModel bool `mapstructure:"compact_use_small_model"`
 }
 
 func Load() (*Config, error) {
@@ -377,4 +395,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("routing.health.failure_threshold", 3)
 	v.SetDefault("routing.health.cooldown_duration", "30s")
 	v.SetDefault("routing.health.rate_limit_default_cooldown", "60s")
+
+	// Messages API defaults (Anthropic-style adapter)
+	v.SetDefault("messages_api.small_model", "")                    // Empty = use requested model
+	v.SetDefault("messages_api.default_reasoning_effort", "medium") // low, medium, high, max
+	v.SetDefault("messages_api.compact_use_small_model", false)     // Don't override model for compact
 }

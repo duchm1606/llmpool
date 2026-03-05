@@ -54,7 +54,8 @@ func NewMessagesHandler(
 }
 
 // CreateMessage handles POST /v1/messages
-// This endpoint accepts Anthropic Claude format and proxies to Copilot /responses.
+// This endpoint accepts Anthropic Claude format and proxies to Copilot.
+// Backend selection follows priority: Messages API > Responses API > Chat Completions.
 func (h *MessagesHandler) CreateMessage(c *gin.Context) {
 	// Read raw body
 	body, err := io.ReadAll(c.Request.Body)
@@ -77,6 +78,29 @@ func (h *MessagesHandler) CreateMessage(c *gin.Context) {
 		zap.Int("max_tokens", req.MaxTokens),
 	)
 
+	// === Preprocessing ===
+
+	// Parse subagent marker from first user message
+	subagentMarker := translator.ParseSubagentMarker(&req)
+	if subagentMarker != nil {
+		h.logger.Debug("detected subagent marker",
+			zap.String("session_id", subagentMarker.SessionID),
+			zap.String("agent_type", subagentMarker.AgentType),
+		)
+	}
+
+	// Detect compact/summarization requests
+	isCompact := translator.IsCompactRequest(&req)
+	if isCompact {
+		h.logger.Debug("detected compact request")
+	}
+
+	// Merge tool_result + text blocks (non-compact only)
+	// This prevents consuming premium requests for certain patterns
+	if !isCompact {
+		translator.MergeToolResultForClaude(&req)
+	}
+
 	// Route to Copilot provider
 	ctx := c.Request.Context()
 	decision, err := h.router.RouteWithHint(ctx, req.Model, "copilot", nil)
@@ -86,13 +110,41 @@ func (h *MessagesHandler) CreateMessage(c *gin.Context) {
 		return
 	}
 
-	// Determine which endpoint to use based on model
-	useResponsesAPI := providerinfra.ShouldUseCopilotResponsesAPI(req.Model)
+	// Determine which endpoint to use based on model capabilities
+	// Priority: Messages API > Responses API > Chat Completions
+	useMessagesAPI := providerinfra.ShouldUseCopilotMessagesAPI(req.Model)
+	useResponsesAPI := !useMessagesAPI && providerinfra.ShouldUseCopilotResponsesAPI(req.Model)
 
 	var copilotBody []byte
 	var endpoint string
 
-	if useResponsesAPI {
+	if useMessagesAPI {
+		// Filter thinking blocks for Claude before sending to Messages API
+		translator.FilterThinkingBlocks(&req, req.Model)
+
+		// Set thinking config for supported models
+		// NOTE: The downstream Copilot Messages API only accepts "enabled" or "disabled" for thinking.type
+		// (NOT "adaptive"). When models support adaptive thinking, we use "enabled" and configure effort
+		// via output_config to control the reasoning behavior.
+		// IMPORTANT: When type="enabled", budget_tokens is REQUIRED by the downstream API.
+		if providerinfra.SupportsAdaptiveThinking(req.Model) {
+			req.Thinking = anthropic.NewThinkingConfigEnabled(0) // Uses DefaultBudgetTokens
+			req.OutputConfig = &anthropic.OutputConfig{
+				Effort: translator.GetEffortForModel("medium"), // default to medium
+			}
+		}
+
+		// Normalize any incoming thinking config to ensure:
+		// 1. Type is valid ("enabled" or "disabled", NOT "adaptive")
+		// 2. budget_tokens is set when type="enabled" (required by downstream API)
+		if req.Thinking != nil {
+			req.Thinking = anthropic.NormalizeThinkingConfig(req.Thinking)
+		}
+
+		// Serialize the request as-is for Messages API (native Anthropic format)
+		copilotBody, err = json.Marshal(req)
+		endpoint = "/v1/messages"
+	} else if useResponsesAPI {
 		// GPT-5+ models (except gpt-5-mini) use /responses endpoint
 		copilotBody, err = translator.AnthropicToCopilotResponses(&req)
 		endpoint = "/responses"
@@ -110,16 +162,20 @@ func (h *MessagesHandler) CreateMessage(c *gin.Context) {
 	h.logger.Debug("converted request",
 		zap.String("copilot_body", truncateStr(string(copilotBody), 500)),
 		zap.String("endpoint", endpoint),
+		zap.Bool("use_messages_api", useMessagesAPI),
 		zap.Bool("use_responses_api", useResponsesAPI),
 	)
 
 	// Build Copilot request URL
 	url := strings.TrimSuffix(decision.BaseURL, "/") + endpoint
 
+	// Get anthropic-beta header for Messages API passthrough
+	anthropicBeta := c.GetHeader("anthropic-beta")
+
 	if req.Stream {
-		h.handleStreaming(c, ctx, url, copilotBody, decision, req.Model, useResponsesAPI)
+		h.handleStreaming(c, ctx, url, copilotBody, decision, req.Model, useMessagesAPI, useResponsesAPI, anthropicBeta)
 	} else {
-		h.handleNonStreaming(c, ctx, url, copilotBody, decision, req.Model, useResponsesAPI)
+		h.handleNonStreaming(c, ctx, url, copilotBody, decision, req.Model, useMessagesAPI, useResponsesAPI, anthropicBeta)
 	}
 }
 
@@ -131,7 +187,9 @@ func (h *MessagesHandler) handleNonStreaming(
 	body []byte,
 	decision *domainprovider.RoutingDecision,
 	model string,
+	useMessagesAPI bool,
 	useResponsesAPI bool,
+	anthropicBeta string,
 ) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
@@ -140,6 +198,11 @@ func (h *MessagesHandler) handleNonStreaming(
 	}
 
 	h.applyCopilotHeaders(httpReq, decision)
+
+	// Add anthropic-beta header for Messages API
+	if useMessagesAPI && anthropicBeta != "" {
+		httpReq.Header.Set("anthropic-beta", anthropicBeta)
+	}
 
 	h.logger.Info("sending non-streaming request to copilot",
 		zap.String("url", url),
@@ -170,7 +233,10 @@ func (h *MessagesHandler) handleNonStreaming(
 
 	// Convert Copilot response to Anthropic format
 	var anthropicResp *anthropic.MessagesResponse
-	if useResponsesAPI {
+	if useMessagesAPI {
+		// Messages API returns native Anthropic format - just unmarshal
+		anthropicResp, err = h.parseMessagesAPIResponse(respBody)
+	} else if useResponsesAPI {
 		anthropicResp, err = h.convertResponsesAPIToAnthropic(respBody, model)
 	} else {
 		anthropicResp, err = h.convertChatCompletionToAnthropic(respBody, model)
@@ -191,7 +257,9 @@ func (h *MessagesHandler) handleStreaming(
 	body []byte,
 	decision *domainprovider.RoutingDecision,
 	model string,
+	useMessagesAPI bool,
 	useResponsesAPI bool,
+	anthropicBeta string,
 ) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
@@ -203,6 +271,11 @@ func (h *MessagesHandler) handleStreaming(
 	httpReq.Header.Set("Accept", "text/event-stream")
 	httpReq.Header.Set("Cache-Control", "no-cache")
 	httpReq.Header.Set("Connection", "keep-alive")
+
+	// Add anthropic-beta header for Messages API
+	if useMessagesAPI && anthropicBeta != "" {
+		httpReq.Header.Set("anthropic-beta", anthropicBeta)
+	}
 
 	h.logger.Info("sending streaming request to copilot",
 		zap.String("url", url),
@@ -235,6 +308,12 @@ func (h *MessagesHandler) handleStreaming(
 
 	writer := c.Writer
 	writer.Flush()
+
+	// Messages API returns native Anthropic SSE - pass through directly
+	if useMessagesAPI {
+		h.streamPassthrough(ctx, resp.Body, writer)
+		return
+	}
 
 	// Create stream state for conversion
 	streamState := translator.NewCopilotToAnthropicStreamState(model)
@@ -307,6 +386,42 @@ func (h *MessagesHandler) handleStreaming(
 			return
 		}
 	}
+}
+
+// streamPassthrough directly passes SSE events from upstream to client.
+// Used for Messages API which returns native Anthropic format.
+func (h *MessagesHandler) streamPassthrough(ctx context.Context, src io.Reader, writer io.Writer) {
+	buf := make([]byte, 4096)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		n, err := src.Read(buf)
+		if n > 0 {
+			if _, writeErr := writer.Write(buf[:n]); writeErr != nil {
+				h.logger.Error("failed to write passthrough data", zap.Error(writeErr))
+				return
+			}
+			if flusher, ok := writer.(interface{ Flush() }); ok {
+				flusher.Flush()
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// parseMessagesAPIResponse parses a native Anthropic Messages API response.
+func (h *MessagesHandler) parseMessagesAPIResponse(respBody []byte) (*anthropic.MessagesResponse, error) {
+	var resp anthropic.MessagesResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("parse messages api response: %w", err)
+	}
+	return &resp, nil
 }
 
 // extractSSEDataFromBlock extracts the data payload from an SSE event block.

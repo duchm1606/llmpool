@@ -18,6 +18,85 @@ type MessagesRequest struct {
 	TopK          *int             `json:"top_k,omitempty"`
 	Metadata      *RequestMetadata `json:"metadata,omitempty"`
 	StopSequences []string         `json:"stop_sequences,omitempty"`
+	// Extended fields for thinking/reasoning support
+	Thinking     *ThinkingConfig `json:"thinking,omitempty"`
+	ServiceTier  string          `json:"service_tier,omitempty"`  // "auto" | "standard_only"
+	OutputConfig *OutputConfig   `json:"output_config,omitempty"` // For adaptive thinking effort
+}
+
+// ThinkingConfig configures extended thinking/reasoning behavior.
+// Reference: Anthropic extended thinking API
+//
+// IMPORTANT: The downstream Copilot Messages API only accepts "enabled" or "disabled"
+// for the Type field. The value "adaptive" is NOT valid and will cause an error.
+// For adaptive thinking behavior, use Type="enabled" with OutputConfig.Effort.
+type ThinkingConfig struct {
+	Type         string `json:"type"`                    // "enabled" | "disabled" (NOT "adaptive")
+	BudgetTokens *int   `json:"budget_tokens,omitempty"` // Max tokens for thinking
+}
+
+// ValidThinkingTypes are the only accepted values for ThinkingConfig.Type
+// when sending requests to the Copilot Messages API.
+var ValidThinkingTypes = []string{"enabled", "disabled"}
+
+// DefaultBudgetTokens is the default value for ThinkingConfig.BudgetTokens
+// when thinking is enabled. This value is required by the downstream API.
+// Reference: opencode uses 16000 for "high" effort, 31999 for "max" effort.
+const DefaultBudgetTokens = 16000
+
+// NormalizeThinkingType converts any non-standard thinking type to a valid one.
+// This prevents "adaptive" (and other invalid values) from being sent downstream.
+func NormalizeThinkingType(t string) string {
+	switch t {
+	case "enabled", "disabled":
+		return t
+	case "adaptive":
+		// "adaptive" is not accepted by downstream API; use "enabled" instead
+		return "enabled"
+	default:
+		// Default to disabled for unknown types
+		return "disabled"
+	}
+}
+
+// NormalizeThinkingConfig normalizes and validates a ThinkingConfig.
+// It ensures:
+//  1. Type is normalized to a valid value ("enabled" or "disabled")
+//  2. BudgetTokens is set when Type is "enabled" (required by downstream API)
+//
+// Returns the normalized config. If input is nil, returns nil.
+func NormalizeThinkingConfig(cfg *ThinkingConfig) *ThinkingConfig {
+	if cfg == nil {
+		return nil
+	}
+
+	// Normalize the type
+	cfg.Type = NormalizeThinkingType(cfg.Type)
+
+	// When type is "enabled", budget_tokens is REQUIRED by downstream API
+	if cfg.Type == "enabled" && cfg.BudgetTokens == nil {
+		budget := DefaultBudgetTokens
+		cfg.BudgetTokens = &budget
+	}
+
+	return cfg
+}
+
+// NewThinkingConfigEnabled creates a new ThinkingConfig with type="enabled"
+// and the specified budget tokens. If budgetTokens is 0, DefaultBudgetTokens is used.
+func NewThinkingConfigEnabled(budgetTokens int) *ThinkingConfig {
+	if budgetTokens <= 0 {
+		budgetTokens = DefaultBudgetTokens
+	}
+	return &ThinkingConfig{
+		Type:         "enabled",
+		BudgetTokens: &budgetTokens,
+	}
+}
+
+// OutputConfig specifies output configuration options.
+type OutputConfig struct {
+	Effort string `json:"effort,omitempty"` // "low" | "medium" | "high" | "max"
 }
 
 // SystemBlock represents a system message block with optional cache control.
@@ -39,9 +118,9 @@ type Message struct {
 }
 
 // ContentBlock represents a content block in a message.
-// Can be text, image, tool_use, or tool_result.
+// Can be text, image, tool_use, tool_result, or thinking.
 type ContentBlock struct {
-	Type         string        `json:"type"` // "text", "image", "tool_use", "tool_result"
+	Type         string        `json:"type"` // "text", "image", "tool_use", "tool_result", "thinking"
 	Text         string        `json:"text,omitempty"`
 	CacheControl *CacheControl `json:"cache_control,omitempty"`
 
@@ -57,6 +136,10 @@ type ContentBlock struct {
 
 	// For image blocks
 	Source *ImageSource `json:"source,omitempty"`
+
+	// For thinking blocks (extended thinking)
+	Thinking  string `json:"thinking,omitempty"`
+	Signature string `json:"signature,omitempty"`
 }
 
 // ImageSource represents an image source in an image content block.
@@ -92,24 +175,29 @@ type MessagesResponse struct {
 	Role         string            `json:"role"` // "assistant"
 	Model        string            `json:"model"`
 	Content      []ResponseContent `json:"content"`
-	StopReason   string            `json:"stop_reason,omitempty"` // "end_turn", "tool_use", "max_tokens", "stop_sequence"
-	StopSequence string            `json:"stop_sequence,omitempty"`
+	StopReason   string            `json:"stop_reason,omitempty"`   // "end_turn", "tool_use", "max_tokens", "stop_sequence", "pause_turn", "refusal"
+	StopSequence *string           `json:"stop_sequence,omitempty"` // Changed to pointer for explicit null
 	Usage        *Usage            `json:"usage,omitempty"`
 }
 
 // ResponseContent represents a content block in the response.
 type ResponseContent struct {
-	Type  string `json:"type"` // "text" or "tool_use"
+	Type  string `json:"type"` // "text", "tool_use", or "thinking"
 	Text  string `json:"text,omitempty"`
 	ID    string `json:"id,omitempty"`    // For tool_use
 	Name  string `json:"name,omitempty"`  // For tool_use
 	Input any    `json:"input,omitempty"` // For tool_use
+	// For thinking blocks
+	Thinking  string `json:"thinking,omitempty"`
+	Signature string `json:"signature,omitempty"`
 }
 
 // Usage represents token usage statistics.
 type Usage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
 }
 
 // StreamEvent represents a streaming SSE event from the Anthropic API.
@@ -138,19 +226,13 @@ type MessageStartPayload struct {
 }
 
 // ContentBlockStartEvent is sent when a new content block starts.
+// ContentBlock is typed as `any` so that we can control exactly which fields
+// appear in the JSON for each block type (text, tool_use, thinking).
+// Using a struct with omitempty would drop required fields like "text":"".
 type ContentBlockStartEvent struct {
-	Type         string               `json:"type"` // "content_block_start"
-	Index        int                  `json:"index"`
-	ContentBlock *ContentBlockPayload `json:"content_block"`
-}
-
-// ContentBlockPayload represents a content block in streaming.
-type ContentBlockPayload struct {
-	Type  string `json:"type"` // "text" or "tool_use"
-	Text  string `json:"text,omitempty"`
-	ID    string `json:"id,omitempty"`
-	Name  string `json:"name,omitempty"`
-	Input any    `json:"input,omitempty"`
+	Type         string `json:"type"` // "content_block_start"
+	Index        int    `json:"index"`
+	ContentBlock any    `json:"content_block"`
 }
 
 // ContentBlockDeltaEvent is sent for incremental content updates.
@@ -162,9 +244,11 @@ type ContentBlockDeltaEvent struct {
 
 // Delta represents an incremental update to a content block.
 type Delta struct {
-	Type        string `json:"type"` // "text_delta" or "input_json_delta"
+	Type        string `json:"type"` // "text_delta", "input_json_delta", "thinking_delta", "signature_delta"
 	Text        string `json:"text,omitempty"`
 	PartialJSON string `json:"partial_json,omitempty"`
+	Thinking    string `json:"thinking,omitempty"`  // For thinking_delta
+	Signature   string `json:"signature,omitempty"` // For signature_delta
 }
 
 // ContentBlockStopEvent is sent when a content block is complete.

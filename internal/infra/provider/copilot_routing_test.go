@@ -186,6 +186,7 @@ func TestCopilotEndpointPath(t *testing.T) {
 	}{
 		{CopilotEndpointChat, "/chat/completions"},
 		{CopilotEndpointResponses, "/responses"},
+		{CopilotEndpointMessages, "/v1/messages"},
 	}
 
 	for _, tc := range tests {
@@ -193,6 +194,79 @@ func TestCopilotEndpointPath(t *testing.T) {
 			got := tc.endpoint.Path()
 			if got != tc.want {
 				t.Fatalf("CopilotEndpoint(%q).Path() = %q, want %q", tc.endpoint, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestShouldUseCopilotMessagesAPI(t *testing.T) {
+	tests := []struct {
+		name    string
+		modelID string
+		want    bool
+	}{
+		// Claude 4.x models that SHOULD use Messages API
+		{name: "claude-sonnet-4.5", modelID: "claude-sonnet-4.5", want: true},
+		{name: "claude-sonnet-4.5-20250101", modelID: "claude-sonnet-4.5-20250101", want: true},
+		{name: "claude-opus-4.5", modelID: "claude-opus-4.5", want: true},
+		{name: "claude-opus-4.5-20251101", modelID: "claude-opus-4.5-20251101", want: true},
+		{name: "claude-opus-4.6", modelID: "claude-opus-4.6", want: true},
+		{name: "claude-haiku-4.5", modelID: "claude-haiku-4.5", want: true},
+		{name: "claude-sonnet-4", modelID: "claude-sonnet-4", want: true},
+		{name: "claude-opus-4", modelID: "claude-opus-4", want: true},
+
+		// Older Claude models should NOT use Messages API
+		{name: "claude-3.5-sonnet", modelID: "claude-3.5-sonnet", want: false},
+		{name: "claude-3-opus", modelID: "claude-3-opus", want: false},
+		{name: "claude-3-sonnet", modelID: "claude-3-sonnet", want: false},
+		{name: "claude-3-haiku", modelID: "claude-3-haiku", want: false},
+
+		// GPT models should NOT use Messages API
+		{name: "gpt-5", modelID: "gpt-5", want: false},
+		{name: "gpt-5-codex", modelID: "gpt-5-codex", want: false},
+		{name: "gpt-4o", modelID: "gpt-4o", want: false},
+
+		// Other models should NOT use Messages API
+		{name: "o1", modelID: "o1", want: false},
+		{name: "gemini-2.5-pro", modelID: "gemini-2.5-pro", want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ShouldUseCopilotMessagesAPI(tc.modelID)
+			if got != tc.want {
+				t.Fatalf("ShouldUseCopilotMessagesAPI(%q) = %v, want %v", tc.modelID, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSupportsAdaptiveThinking(t *testing.T) {
+	tests := []struct {
+		name    string
+		modelID string
+		want    bool
+	}{
+		// Models that SHOULD support adaptive thinking
+		{name: "claude-sonnet-4.5", modelID: "claude-sonnet-4.5", want: true},
+		{name: "claude-sonnet-4.5-20250101", modelID: "claude-sonnet-4.5-20250101", want: true},
+		{name: "claude-opus-4.5", modelID: "claude-opus-4.5", want: true},
+		{name: "claude-opus-4.6", modelID: "claude-opus-4.6", want: true},
+
+		// Models that should NOT support adaptive thinking
+		{name: "claude-sonnet-4", modelID: "claude-sonnet-4", want: false},
+		{name: "claude-opus-4", modelID: "claude-opus-4", want: false},
+		{name: "claude-haiku-4.5", modelID: "claude-haiku-4.5", want: false},
+		{name: "claude-3.5-sonnet", modelID: "claude-3.5-sonnet", want: false},
+		{name: "gpt-5", modelID: "gpt-5", want: false},
+		{name: "gpt-4o", modelID: "gpt-4o", want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SupportsAdaptiveThinking(tc.modelID)
+			if got != tc.want {
+				t.Fatalf("SupportsAdaptiveThinking(%q) = %v, want %v", tc.modelID, got, tc.want)
 			}
 		})
 	}

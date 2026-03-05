@@ -13,6 +13,8 @@ const (
 	CopilotEndpointChat CopilotEndpoint = "chat"
 	// CopilotEndpointResponses is the /responses endpoint.
 	CopilotEndpointResponses CopilotEndpoint = "responses"
+	// CopilotEndpointMessages is the /v1/messages endpoint (native Anthropic-style).
+	CopilotEndpointMessages CopilotEndpoint = "messages"
 )
 
 var gptVersionRegex = regexp.MustCompile(`^gpt-(\d+)`)
@@ -80,7 +82,66 @@ func (e CopilotEndpoint) Path() string {
 	switch e {
 	case CopilotEndpointResponses:
 		return "/responses"
+	case CopilotEndpointMessages:
+		return "/v1/messages"
 	default:
 		return "/chat/completions"
 	}
+}
+
+// ShouldUseCopilotMessagesAPI determines if a model should use the /v1/messages endpoint.
+// The Messages API is the native Anthropic-style endpoint, preferred for Claude models
+// that support adaptive thinking and extended features.
+//
+// Currently enabled for Claude 4.x models (sonnet-4.5, opus-4.5, opus-4.6, etc.)
+// which support features like adaptive_thinking through the Messages API.
+//
+// Examples:
+//   - "claude-sonnet-4.5" -> true (use messages)
+//   - "claude-opus-4.5" -> true (use messages)
+//   - "claude-3.5-sonnet" -> false (older model, use chat)
+//   - "gpt-5" -> false (not Claude, use responses or chat)
+func ShouldUseCopilotMessagesAPI(modelID string) bool {
+	// Claude 4.x models with adaptive thinking support
+	// These models have been verified to support /v1/messages on Copilot
+	messagesModels := []string{
+		"claude-sonnet-4.5",
+		"claude-opus-4.5",
+		"claude-opus-4.6",
+		"claude-haiku-4.5",
+		// Also support the base versions without minor version
+		"claude-sonnet-4",
+		"claude-opus-4",
+	}
+
+	for _, m := range messagesModels {
+		if strings.HasPrefix(modelID, m) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// SupportsAdaptiveThinking checks if a model supports adaptive thinking config.
+// Adaptive thinking enables dynamic reasoning effort for Claude models via the Messages API.
+//
+// IMPORTANT: "Adaptive thinking" here refers to models that support reasoning with
+// configurable effort (via output_config.effort). The thinking.type MUST be set to
+// "enabled" (NOT "adaptive") - the downstream API only accepts "enabled" or "disabled".
+func SupportsAdaptiveThinking(modelID string) bool {
+	// Models that support adaptive_thinking in their capabilities
+	adaptiveModels := []string{
+		"claude-sonnet-4.5",
+		"claude-opus-4.5",
+		"claude-opus-4.6",
+	}
+
+	for _, m := range adaptiveModels {
+		if strings.HasPrefix(modelID, m) {
+			return true
+		}
+	}
+
+	return false
 }
