@@ -4,7 +4,7 @@ MIGRATE ?= migrate
 DB_DSN ?= postgres://postgres:postgres@localhost:5432/llmpool?sslmode=disable
 MIGRATIONS_DIR ?= db/migrations
 
-.PHONY: run build test lint up down migrate-up migrate-down migrate-version migrate-force
+.PHONY: run build test lint up down migrate-up migrate-up-docker migrate-down migrate-version migrate-force
 
 run:
 	go run ./cmd/api
@@ -26,6 +26,9 @@ down:
 
 migrate-up:
 	$(MIGRATE) -path $(MIGRATIONS_DIR) -database "$(DB_DSN)" up
+
+migrate-up-docker:
+	docker compose run --rm migrate
 
 migrate-down:
 	$(MIGRATE) -path $(MIGRATIONS_DIR) -database "$(DB_DSN)" down 1

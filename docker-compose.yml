@@ -1,4 +1,19 @@
 services:
+  migrate:
+    image: migrate/migrate:v4.19.0
+    command:
+      [
+        "-path=/migrations",
+        "-database=postgres://postgres:postgres@postgres:5432/llmpool?sslmode=disable",
+        "up",
+      ]
+    volumes:
+      - ./db/migrations:/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   app:
     build:
       context: .
@@ -12,9 +27,14 @@ services:
       LLMPOOL_POSTGRES_DSN: postgres://postgres:postgres@postgres:5432/llmpool?sslmode=disable
       LLMPOOL_REDIS_ADDR: redis:6379
       LLMPOOL_ORCHESTRATOR_LB_STRATEGY: round-robin
+      LLMPOOL_SECURITY_ENCRYPTION_KEY: ${LLMPOOL_SECURITY_ENCRYPTION_KEY:?LLMPOOL_SECURITY_ENCRYPTION_KEY is required}
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
 
   postgres:
     image: postgres:16-alpine
@@ -27,6 +47,12 @@ services:
       - "5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d llmpool"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
 
   redis:
     image: redis:7-alpine
