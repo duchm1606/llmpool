@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/duchoang/llmpool/internal/domain/anthropic"
 	domainprovider "github.com/duchoang/llmpool/internal/domain/provider"
@@ -27,6 +29,8 @@ const (
 	copilotUserAgentMsg           = "GitHubCopilotChat/" + copilotChatVersionMsg
 	defaultVSCodeVersionMsg       = "1.104.3"
 	copilotGitHubAPIVersionMsg    = "2025-04-01"
+
+	messagesHeartbeatInterval = 15 * time.Second
 )
 
 // MessagesHandler handles Anthropic Claude Messages API requests.
@@ -48,9 +52,27 @@ func NewMessagesHandler(
 	return &MessagesHandler{
 		router:     router,
 		registry:   registry,
-		httpClient: &http.Client{},
+		httpClient: newMessagesHTTPClient(),
 		logger:     logger,
 	}
+}
+
+func newMessagesHTTPClient() *http.Client {
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:          200,
+		MaxIdleConnsPerHost:   100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ForceAttemptHTTP2:     true,
+	}
+
+	return &http.Client{Transport: transport}
 }
 
 // CreateMessage handles POST /v1/messages
@@ -191,6 +213,12 @@ func (h *MessagesHandler) handleNonStreaming(
 	useResponsesAPI bool,
 	anthropicBeta string,
 ) {
+	start := time.Now()
+	requestID := c.GetHeader("X-Request-ID")
+	if requestID == "" {
+		requestID = c.Writer.Header().Get("X-Request-ID")
+	}
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		h.respondError(c, http.StatusInternalServerError, "api_error", "failed to create request")
@@ -207,10 +235,18 @@ func (h *MessagesHandler) handleNonStreaming(
 	h.logger.Info("sending non-streaming request to copilot",
 		zap.String("url", url),
 		zap.String("model", model),
+		zap.String("request_id", requestID),
 	)
 
 	resp, err := h.httpClient.Do(httpReq)
 	if err != nil {
+		h.logger.Error("copilot upstream transport error",
+			zap.String("url", url),
+			zap.String("model", model),
+			zap.String("request_id", requestID),
+			zap.Duration("elapsed", time.Since(start)),
+			zap.Error(err),
+		)
 		h.respondError(c, http.StatusBadGateway, "api_error", "upstream request failed: "+err.Error())
 		return
 	}
@@ -218,6 +254,14 @@ func (h *MessagesHandler) handleNonStreaming(
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
+		h.logger.Error("failed reading copilot non-streaming response",
+			zap.String("url", url),
+			zap.String("model", model),
+			zap.String("request_id", requestID),
+			zap.Int("status", resp.StatusCode),
+			zap.Duration("elapsed", time.Since(start)),
+			zap.Error(err),
+		)
 		h.respondError(c, http.StatusBadGateway, "api_error", "failed to read upstream response")
 		return
 	}
@@ -225,11 +269,24 @@ func (h *MessagesHandler) handleNonStreaming(
 	if resp.StatusCode >= 400 {
 		h.logger.Warn("copilot upstream error",
 			zap.Int("status", resp.StatusCode),
+			zap.String("url", url),
+			zap.String("model", model),
+			zap.String("request_id", requestID),
+			zap.Duration("elapsed", time.Since(start)),
 			zap.String("body", truncateStr(string(respBody), 500)),
 		)
 		h.respondError(c, resp.StatusCode, "api_error", string(respBody))
 		return
 	}
+
+	h.logger.Debug("copilot non-streaming request completed",
+		zap.String("url", url),
+		zap.String("model", model),
+		zap.String("request_id", requestID),
+		zap.Int("status", resp.StatusCode),
+		zap.Int("response_bytes", len(respBody)),
+		zap.Duration("elapsed", time.Since(start)),
+	)
 
 	// Convert Copilot response to Anthropic format
 	var anthropicResp *anthropic.MessagesResponse
@@ -261,6 +318,12 @@ func (h *MessagesHandler) handleStreaming(
 	useResponsesAPI bool,
 	anthropicBeta string,
 ) {
+	start := time.Now()
+	requestID := c.GetHeader("X-Request-ID")
+	if requestID == "" {
+		requestID = c.Writer.Header().Get("X-Request-ID")
+	}
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		h.respondError(c, http.StatusInternalServerError, "api_error", "failed to create request")
@@ -280,10 +343,18 @@ func (h *MessagesHandler) handleStreaming(
 	h.logger.Info("sending streaming request to copilot",
 		zap.String("url", url),
 		zap.String("model", model),
+		zap.String("request_id", requestID),
 	)
 
 	resp, err := h.httpClient.Do(httpReq)
 	if err != nil {
+		h.logger.Error("copilot streaming upstream transport error",
+			zap.String("url", url),
+			zap.String("model", model),
+			zap.String("request_id", requestID),
+			zap.Duration("elapsed", time.Since(start)),
+			zap.Error(err),
+		)
 		h.respondError(c, http.StatusBadGateway, "api_error", "upstream request failed: "+err.Error())
 		return
 	}
@@ -293,6 +364,10 @@ func (h *MessagesHandler) handleStreaming(
 		respBody, _ := io.ReadAll(resp.Body)
 		h.logger.Warn("copilot streaming upstream error",
 			zap.Int("status", resp.StatusCode),
+			zap.String("url", url),
+			zap.String("model", model),
+			zap.String("request_id", requestID),
+			zap.Duration("elapsed", time.Since(start)),
 			zap.String("body", truncateStr(string(respBody), 500)),
 		)
 		h.respondError(c, resp.StatusCode, "api_error", string(respBody))
@@ -309,9 +384,20 @@ func (h *MessagesHandler) handleStreaming(
 	writer := c.Writer
 	writer.Flush()
 
+	heartbeatCtx, heartbeatCancel := context.WithCancel(ctx)
+	defer heartbeatCancel()
+
+	go h.startSSEHeartbeat(heartbeatCtx, writer, requestID, model)
+
 	// Messages API returns native Anthropic SSE - pass through directly
 	if useMessagesAPI {
-		h.streamPassthrough(ctx, resp.Body, writer)
+		h.streamPassthrough(ctx, resp.Body, writer, requestID, model)
+		h.logger.Debug("copilot streaming request completed",
+			zap.String("url", url),
+			zap.String("model", model),
+			zap.String("request_id", requestID),
+			zap.Duration("elapsed", time.Since(start)),
+		)
 		return
 	}
 
@@ -321,10 +407,18 @@ func (h *MessagesHandler) handleStreaming(
 	// Read and transform SSE events
 	buf := make([]byte, 4096)
 	var partial []byte
+	bytesSent := 0
 
 	for {
 		select {
 		case <-ctx.Done():
+			h.logger.Info("messages stream canceled by context",
+				zap.String("request_id", requestID),
+				zap.String("model", model),
+				zap.Int("bytes_sent", bytesSent),
+				zap.Duration("elapsed", time.Since(start)),
+				zap.Error(ctx.Err()),
+			)
 			return
 		default:
 		}
@@ -352,9 +446,17 @@ func (h *MessagesHandler) handleStreaming(
 				if bytes.Equal(data, []byte("[DONE]")) {
 					// Emit final events
 					for _, evt := range streamState.Finalize() {
-						_, _ = writer.WriteString(evt)
+						nWritten, _ := writer.WriteString(evt)
+						bytesSent += nWritten
 					}
 					writer.Flush()
+					h.logger.Debug("copilot streaming request completed",
+						zap.String("url", url),
+						zap.String("model", model),
+						zap.String("request_id", requestID),
+						zap.Int("bytes_sent", bytesSent),
+						zap.Duration("elapsed", time.Since(start)),
+					)
 					return
 				}
 
@@ -366,10 +468,12 @@ func (h *MessagesHandler) handleStreaming(
 					anthropicEvents = streamState.ConvertChatCompletionEventToAnthropic(data)
 				}
 				for _, evt := range anthropicEvents {
-					if _, err := writer.WriteString(evt); err != nil {
+					nWritten, err := writer.WriteString(evt)
+					if err != nil {
 						h.logger.Error("failed to write SSE event", zap.Error(err))
 						return
 					}
+					bytesSent += nWritten
 				}
 				writer.Flush()
 			}
@@ -379,9 +483,26 @@ func (h *MessagesHandler) handleStreaming(
 			if readErr == io.EOF || errors.Is(readErr, context.Canceled) {
 				// Emit final events
 				for _, evt := range streamState.Finalize() {
-					_, _ = writer.WriteString(evt)
+					nWritten, _ := writer.WriteString(evt)
+					bytesSent += nWritten
 				}
 				writer.Flush()
+				h.logger.Debug("copilot streaming request completed",
+					zap.String("url", url),
+					zap.String("model", model),
+					zap.String("request_id", requestID),
+					zap.Int("bytes_sent", bytesSent),
+					zap.Duration("elapsed", time.Since(start)),
+				)
+			} else {
+				h.logger.Warn("copilot streaming read error",
+					zap.String("url", url),
+					zap.String("model", model),
+					zap.String("request_id", requestID),
+					zap.Int("bytes_sent", bytesSent),
+					zap.Duration("elapsed", time.Since(start)),
+					zap.Error(readErr),
+				)
 			}
 			return
 		}
@@ -390,27 +511,71 @@ func (h *MessagesHandler) handleStreaming(
 
 // streamPassthrough directly passes SSE events from upstream to client.
 // Used for Messages API which returns native Anthropic format.
-func (h *MessagesHandler) streamPassthrough(ctx context.Context, src io.Reader, writer io.Writer) {
+func (h *MessagesHandler) streamPassthrough(ctx context.Context, src io.Reader, writer io.Writer, requestID string, model string) {
 	buf := make([]byte, 4096)
+	bytesSent := 0
 	for {
 		select {
 		case <-ctx.Done():
+			h.logger.Info("messages passthrough stream canceled by context",
+				zap.String("request_id", requestID),
+				zap.String("model", model),
+				zap.Int("bytes_sent", bytesSent),
+				zap.Error(ctx.Err()),
+			)
 			return
 		default:
 		}
 
 		n, err := src.Read(buf)
 		if n > 0 {
-			if _, writeErr := writer.Write(buf[:n]); writeErr != nil {
+			nWritten, writeErr := writer.Write(buf[:n])
+			if writeErr != nil {
 				h.logger.Error("failed to write passthrough data", zap.Error(writeErr))
 				return
 			}
+			bytesSent += nWritten
 			if flusher, ok := writer.(interface{ Flush() }); ok {
 				flusher.Flush()
 			}
 		}
 		if err != nil {
+			if err != io.EOF {
+				h.logger.Warn("messages passthrough stream read error",
+					zap.String("request_id", requestID),
+					zap.String("model", model),
+					zap.Int("bytes_sent", bytesSent),
+					zap.Error(err),
+				)
+			}
 			return
+		}
+	}
+}
+
+func (h *MessagesHandler) startSSEHeartbeat(
+	ctx context.Context,
+	writer gin.ResponseWriter,
+	requestID string,
+	model string,
+) {
+	ticker := time.NewTicker(messagesHeartbeatInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := writer.WriteString(": ping\n\n"); err != nil {
+				h.logger.Debug("sse heartbeat stopped",
+					zap.String("request_id", requestID),
+					zap.String("model", model),
+					zap.Error(err),
+				)
+				return
+			}
+			writer.Flush()
 		}
 	}
 }

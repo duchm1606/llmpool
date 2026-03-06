@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -58,9 +59,23 @@ type client struct {
 
 // NewClient creates a new provider client.
 func NewClient(config ClientConfig, logger *zap.Logger) usecasecompletion.ProviderClient {
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          300,
+		MaxIdleConnsPerHost:   150,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+
 	return &client{
 		httpClient: &http.Client{
-			Timeout: config.Timeout,
+			Transport: transport,
 		},
 		logger:                        logger,
 		enableCopilotResponsesRouting: config.EnableCopilotResponsesRouting,

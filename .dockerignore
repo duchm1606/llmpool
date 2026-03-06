@@ -1,0 +1,14 @@
+.git
+.github
+.idea
+.vscode
+.opencode
+bin
+dist
+tmp
+coverage.html
+*.out
+*.test
+.env
+.env.*
+product-docs

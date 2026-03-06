@@ -113,7 +113,7 @@ server:
   host: 0.0.0.0
   port: 8080
   read_timeout: 10s
-  write_timeout: 10s
+  write_timeout: 0s
   idle_timeout: 30s
 
 log:
