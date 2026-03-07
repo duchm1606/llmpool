@@ -12,3 +12,37 @@ Perfect for heavy users of coding tools (Cursor, Continue.dev, VS Code extension
 - Open-source core (self-host with Docker) + optional subscription for managed hosting, auto OAuth refresh, advanced routing rules, and priority support.
 
 One endpoint. Zero rate-limit anxiety. Complete visibility.
+
+## Docker Quickstart (Auto Migrations)
+
+`docker compose up --build` now runs database migrations automatically before the app starts.
+If migrations fail, the app does not start (fail-fast).
+
+1. Copy `.env.example` to `.env` and adjust values if needed.
+2. Start everything:
+
+```bash
+docker compose up --build
+```
+
+This starts:
+- `postgres`
+- `redis`
+- `migrate` (one-shot `up` over `db/migrations`)
+- `app` (only after `migrate` succeeds)
+- `web` (Next.js internal dashboard on port `3000`)
+
+Useful commands:
+
+```bash
+# Run migration manually inside Docker (no local migrate install needed)
+make migrate-up-docker
+
+# Stop stack
+make down
+```
+
+### Access
+
+- API: `http://localhost:8080`
+- Dashboard: `http://localhost:3000`

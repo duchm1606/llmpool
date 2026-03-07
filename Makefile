@@ -3,6 +3,7 @@ GOLANGCI_LINT=$(shell go env GOPATH)/bin/golangci-lint
 MIGRATE ?= migrate
 DB_DSN ?= postgres://postgres:postgres@localhost:5432/llmpool?sslmode=disable
 MIGRATIONS_DIR ?= db/migrations
+GO_PACKAGES=$(shell go list ./... | grep -v '/web/')
 
 .PHONY: run build test lint up down migrate-up migrate-up-docker migrate-down migrate-version migrate-force
 
@@ -13,7 +14,7 @@ build:
 	go build -o bin/$(APP_NAME) ./cmd/api
 
 test:
-	go test ./...
+	go test $(GO_PACKAGES)
 
 lint:
 	$(GOLANGCI_LINT) run ./...

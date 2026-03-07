@@ -12,6 +12,7 @@ import (
 	usecasehealth "github.com/duchoang/llmpool/internal/usecase/health"
 	usecaseoauth "github.com/duchoang/llmpool/internal/usecase/oauth"
 	usecasequota "github.com/duchoang/llmpool/internal/usecase/quota"
+	usecaseusage "github.com/duchoang/llmpool/internal/usecase/usage"
 	"github.com/gin-gonic/gin"
 )
 
@@ -41,6 +42,14 @@ type RouterDeps struct {
 	// When set, enables the /v1/messages endpoint for Anthropic-compatible API
 	Router           usecasecompletion.Router
 	ProviderRegistry usecasecompletion.ProviderRegistry
+
+	// Usage tracking services (optional)
+	UsageStatsService     usecaseusage.StatsService
+	UsageRetentionService usecaseusage.RetentionService
+	UsagePublisher        handler.MessagesUsagePublisher // For tracking /v1/messages requests
+
+	// CORS configuration (optional)
+	CORSConfig *configinfra.CORSConfig
 }
 
 func NewRouter(
@@ -84,6 +93,17 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.SecurityLogger(requestLogger))
 	r.Use(middleware.Recovery(recoveryLogger))
+
+	// Apply CORS middleware for internal usage endpoints if configured
+	if deps.CORSConfig != nil && deps.CORSConfig.Enabled && len(deps.CORSConfig.AllowedOrigins) > 0 {
+		corsConfig := middleware.CORSConfig{
+			AllowedOrigins: deps.CORSConfig.AllowedOrigins,
+			AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+			AllowedHeaders: []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Request-ID"},
+			MaxAge:         86400,
+		}
+		r.Use(middleware.CORSForRoutes(corsConfig, "/v1/internal/usage"))
+	}
 
 	healthHandler := handler.NewHealthHandler(deps.HealthService)
 	r.GET("/health", healthHandler.Get)
@@ -138,6 +158,21 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 		r.GET("/v1/internal/usage", usageHandler.ListUsages)
 	}
 
+	// Usage stats endpoints for dashboard
+	if deps.UsageStatsService != nil && deps.UsageRetentionService != nil {
+		usageStatsLogger := loggerinfra.ForModule("delivery.http.handler.usage_stats")
+		usageStatsHandler := handler.NewUsageStatsHandler(
+			deps.UsageStatsService,
+			deps.UsageRetentionService,
+			usageStatsLogger,
+		)
+		r.GET("/v1/internal/usage/stats", usageStatsHandler.GetDashboardStats)
+		r.POST("/v1/internal/usage/stats/rebuild", usageStatsHandler.RebuildStats)
+		r.GET("/v1/internal/usage/audit", usageStatsHandler.ListAuditLogs)
+		r.GET("/v1/internal/usage/audit/:request_id", usageStatsHandler.GetAuditLogByRequestID)
+		r.POST("/v1/internal/usage/cleanup", usageStatsHandler.RunRetentionCleanup)
+	}
+
 	// OpenAI-compatible completion API routes
 	if deps.CompletionService != nil {
 		completionLogger := loggerinfra.ForModule("delivery.http.handler.completion")
@@ -164,6 +199,11 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 	if deps.Router != nil && deps.ProviderRegistry != nil {
 		messagesLogger := loggerinfra.ForModule("delivery.http.handler.messages")
 		messagesHandler := handler.NewMessagesHandler(deps.Router, deps.ProviderRegistry, messagesLogger)
+
+		// Wire usage publisher if available
+		if deps.UsagePublisher != nil {
+			messagesHandler.SetUsagePublisher(deps.UsagePublisher)
+		}
 
 		// Anthropic Messages API
 		r.POST("/v1/messages", messagesHandler.CreateMessage)

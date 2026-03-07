@@ -71,6 +71,14 @@ func NewCopilotToAnthropicStreamState(model string) *CopilotToAnthropicStreamSta
 	}
 }
 
+// GetUsage returns the token usage tracked during streaming.
+func (s *CopilotToAnthropicStreamState) GetUsage() *anthropic.Usage {
+	return &anthropic.Usage{
+		InputTokens:  s.InputTokens,
+		OutputTokens: s.OutputTokens,
+	}
+}
+
 // ConvertCopilotEventToAnthropic converts a Copilot Responses API SSE event
 // to Anthropic Messages API SSE events.
 // Returns a list of SSE event strings (each in "event: X\ndata: Y\n\n" format).

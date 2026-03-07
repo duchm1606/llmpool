@@ -11,6 +11,7 @@ import (
 
 	deliveryhttp "github.com/duchoang/llmpool/internal/delivery/http"
 	domainquota "github.com/duchoang/llmpool/internal/domain/quota"
+	domainusage "github.com/duchoang/llmpool/internal/domain/usage"
 	configinfra "github.com/duchoang/llmpool/internal/infra/config"
 	credentialrepo "github.com/duchoang/llmpool/internal/infra/credential"
 	loggerinfra "github.com/duchoang/llmpool/internal/infra/logger"
@@ -21,11 +22,13 @@ import (
 	redisinfra "github.com/duchoang/llmpool/internal/infra/redis"
 	refreshinfra "github.com/duchoang/llmpool/internal/infra/refresh"
 	securityinfra "github.com/duchoang/llmpool/internal/infra/security"
+	usageinfra "github.com/duchoang/llmpool/internal/infra/usage"
 	"github.com/duchoang/llmpool/internal/platform/server"
 	usecasecompletion "github.com/duchoang/llmpool/internal/usecase/completion"
 	usecasecredential "github.com/duchoang/llmpool/internal/usecase/credential"
 	usecasehealth "github.com/duchoang/llmpool/internal/usecase/health"
 	usecasequota "github.com/duchoang/llmpool/internal/usecase/quota"
+	usecaseusage "github.com/duchoang/llmpool/internal/usecase/usage"
 	"go.uber.org/zap"
 )
 
@@ -161,12 +164,94 @@ func main() {
 		quotaWorkerCfg,
 	)
 
+	// Initialize usage tracking services
+	var usageManager *usecaseusage.Manager
+	var usageStatsService usecaseusage.StatsService
+	var usageRetentionService usecaseusage.RetentionService
+	var retentionWorker *server.RetentionWorker
+	var statsWorker *server.StatsWorker
+
+	if cfg.Usage.Enabled {
+		// Create usage repository and cache
+		usageRepo := usageinfra.NewPostgresRepository(postgresPool)
+		usageCache := usageinfra.NewRedisStatsCache(redisClient)
+
+		// Create pricing config
+		pricingConfig := domainusage.DefaultPricingConfig()
+
+		// Create usage manager
+		usageManagerCfg := usecaseusage.ManagerConfig{
+			QueueSize:     cfg.Usage.QueueSize,
+			BatchSize:     cfg.Usage.BatchSize,
+			FlushInterval: cfg.Usage.FlushInterval,
+		}
+		usageManager = usecaseusage.NewManager(
+			usageRepo,
+			pricingConfig,
+			usageManagerCfg,
+			loggerinfra.ForModule("usecase.usage.manager"),
+		)
+
+		// Create stats service
+		statsServiceCfg := usecaseusage.StatsServiceConfig{
+			CacheTTL: cfg.Usage.StatsCacheTTL,
+		}
+		usageStatsService = usecaseusage.NewStatsService(
+			usageRepo,
+			usageCache,
+			statsServiceCfg,
+			loggerinfra.ForModule("usecase.usage.stats"),
+		)
+
+		// Create retention service
+		retentionCfg := usecaseusage.RetentionConfig{
+			RetentionDays: cfg.Usage.RetentionDays,
+		}
+		usageRetentionService = usecaseusage.NewRetentionService(
+			usageRepo,
+			retentionCfg,
+			loggerinfra.ForModule("usecase.usage.retention"),
+		)
+
+		// Create retention worker
+		retentionWorkerCfg := server.RetentionWorkerConfig{
+			CleanupInterval: cfg.Usage.RetentionCleanupInterval,
+		}
+		retentionWorker = server.NewRetentionWorker(
+			usageRetentionService,
+			loggerinfra.ForModule("platform.server.retention_worker"),
+			retentionWorkerCfg,
+		)
+
+		// Create periodic stats aggregation worker
+		statsWorkerCfg := server.StatsWorkerConfig{
+			RebuildInterval: cfg.Usage.StatsRebuildInterval,
+		}
+		statsWorker = server.NewStatsWorker(
+			usageStatsService,
+			loggerinfra.ForModule("platform.server.stats_worker"),
+			statsWorkerCfg,
+		)
+
+		log.Info("usage tracking enabled",
+			zap.Int("queue_size", cfg.Usage.QueueSize),
+			zap.Int("batch_size", cfg.Usage.BatchSize),
+			zap.Duration("flush_interval", cfg.Usage.FlushInterval),
+			zap.Duration("stats_rebuild_interval", cfg.Usage.StatsRebuildInterval),
+			zap.Int("retention_days", cfg.Usage.RetentionDays),
+		)
+	}
+
 	// Initialize completion service if routing is enabled
 	var completionService usecasecompletion.CompletionService
 	var completionRouter usecasecompletion.Router
 	var providerRegistry usecasecompletion.ProviderRegistry
 	if cfg.Routing.Enabled {
 		completionService, completionRouter, providerRegistry = initCompletionService(cfg, profileRepo, encryptor, refreshService, log)
+		// Wire usage publisher if usage tracking is enabled
+		if usageManager != nil {
+			completionService.SetUsagePublisher(usageManager)
+		}
 		log.Info("completion routing enabled",
 			zap.Strings("provider_priority", cfg.Routing.ProviderPriority),
 			zap.Int("max_fallback_attempts", cfg.Routing.Fallback.MaxAttempts),
@@ -188,9 +273,13 @@ func main() {
 		CopilotOAuthProvider:          copilotProvider,
 		CopilotOAuthSessionTTL:        cfg.OAuth.Copilot.SessionTTL,
 		CopilotOAuthCompletionService: copilotOAuthCompletionService,
-		UsageCache:                    quotaStateCache,  // For usage endpoint
-		Router:                        completionRouter, // For Anthropic Messages API
-		ProviderRegistry:              providerRegistry, // For Anthropic Messages API
+		UsageCache:                    quotaStateCache,       // For usage endpoint
+		Router:                        completionRouter,      // For Anthropic Messages API
+		ProviderRegistry:              providerRegistry,      // For Anthropic Messages API
+		UsageStatsService:             usageStatsService,     // For usage stats dashboard
+		UsageRetentionService:         usageRetentionService, // For usage retention cleanup
+		UsagePublisher:                usageManager,          // For tracking /v1/messages requests
+		CORSConfig:                    &cfg.CORS,             // For CORS middleware
 	})
 
 	httpServer := server.NewHTTPServer(cfg.Server, router)
@@ -208,6 +297,26 @@ func main() {
 			zap.Duration("sample_interval", cfg.Liveness.SampleInterval),
 			zap.Duration("full_sweep_interval", cfg.Liveness.FullSweepInterval),
 		)
+	}
+
+	// Start usage tracking workers if enabled
+	if cfg.Usage.Enabled && usageManager != nil {
+		usageManager.Start(shutdownCtx)
+		log.Info("usage manager started")
+
+		if statsWorker != nil {
+			go statsWorker.Start(shutdownCtx)
+			log.Info("stats worker started",
+				zap.Duration("rebuild_interval", cfg.Usage.StatsRebuildInterval),
+			)
+		}
+
+		if retentionWorker != nil {
+			go retentionWorker.Start(shutdownCtx)
+			log.Info("retention worker started",
+				zap.Duration("cleanup_interval", cfg.Usage.RetentionCleanupInterval),
+			)
+		}
 	}
 
 	go func() {
@@ -228,6 +337,12 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
+	// Stop usage manager first to flush pending records
+	if usageManager != nil {
+		usageManager.Stop()
+		log.Info("usage manager stopped")
+	}
 
 	if shutdownErr := httpServer.Shutdown(ctx); shutdownErr != nil {
 		log.Error("graceful shutdown failed", zap.Error(shutdownErr))

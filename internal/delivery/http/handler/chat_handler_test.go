@@ -44,6 +44,10 @@ func (m *mockCompletionService) ListModels(_ context.Context) (*domaincompletion
 	return nil, nil
 }
 
+func (m *mockCompletionService) SetUsagePublisher(_ usecasecompletion.UsagePublisher) {
+	// no-op for mock
+}
+
 // Compile-time check that mockCompletionService implements the interface
 var _ usecasecompletion.CompletionService = (*mockCompletionService)(nil)
 

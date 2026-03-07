@@ -134,6 +134,10 @@ type CompletionService interface {
 
 	// ListModels returns all available models.
 	ListModels(ctx context.Context) (*domaincompletion.ModelsResponse, error)
+
+	// SetUsagePublisher sets the usage publisher for tracking.
+	// This is optional - if not set, usage tracking is disabled.
+	SetUsagePublisher(publisher UsagePublisher)
 }
 
 // PerUserMappingProvider provides per-user provider preferences.

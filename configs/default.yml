@@ -124,3 +124,21 @@ providers:
     auth_type: api_key
     timeout: 120s
     models: []
+
+# Usage tracking configuration
+usage:
+  enabled: true
+  queue_size: 10000
+  batch_size: 100
+  flush_interval: 5s
+  stats_cache_ttl: 5m
+  stats_rebuild_interval: 15m
+  retention_days: 90
+  retention_cleanup_interval: 24h
+
+# CORS configuration for internal web dashboard
+cors:
+  enabled: true
+  allowed_origins:
+    - "http://localhost:3000"
+    - "http://localhost:5173"

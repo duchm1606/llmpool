@@ -14,6 +14,7 @@ import (
 
 	"github.com/duchoang/llmpool/internal/domain/anthropic"
 	domainprovider "github.com/duchoang/llmpool/internal/domain/provider"
+	domainusage "github.com/duchoang/llmpool/internal/domain/usage"
 	providerinfra "github.com/duchoang/llmpool/internal/infra/provider"
 	"github.com/duchoang/llmpool/internal/translator"
 	usecasecompletion "github.com/duchoang/llmpool/internal/usecase/completion"
@@ -33,14 +34,21 @@ const (
 	messagesHeartbeatInterval = 15 * time.Second
 )
 
+// MessagesUsagePublisher is used to publish usage records for messages requests.
+type MessagesUsagePublisher interface {
+	// Publish queues a usage record for async processing.
+	Publish(record domainusage.UsageRecord)
+}
+
 // MessagesHandler handles Anthropic Claude Messages API requests.
 // It proxies requests to GitHub Copilot's /responses endpoint while providing
 // an Anthropic-compatible interface.
 type MessagesHandler struct {
-	router     usecasecompletion.Router
-	registry   usecasecompletion.ProviderRegistry
-	httpClient *http.Client
-	logger     *zap.Logger
+	router         usecasecompletion.Router
+	registry       usecasecompletion.ProviderRegistry
+	httpClient     *http.Client
+	logger         *zap.Logger
+	usagePublisher MessagesUsagePublisher
 }
 
 // NewMessagesHandler creates a new messages handler.
@@ -55,6 +63,11 @@ func NewMessagesHandler(
 		httpClient: newMessagesHTTPClient(),
 		logger:     logger,
 	}
+}
+
+// SetUsagePublisher sets the usage publisher for tracking.
+func (h *MessagesHandler) SetUsagePublisher(publisher MessagesUsagePublisher) {
+	h.usagePublisher = publisher
 }
 
 func newMessagesHTTPClient() *http.Client {
@@ -247,6 +260,7 @@ func (h *MessagesHandler) handleNonStreaming(
 			zap.Duration("elapsed", time.Since(start)),
 			zap.Error(err),
 		)
+		h.publishUsage(requestID, model, decision, nil, domainusage.StatusFailed, err.Error(), start, false)
 		h.respondError(c, http.StatusBadGateway, "api_error", "upstream request failed: "+err.Error())
 		return
 	}
@@ -262,6 +276,7 @@ func (h *MessagesHandler) handleNonStreaming(
 			zap.Duration("elapsed", time.Since(start)),
 			zap.Error(err),
 		)
+		h.publishUsage(requestID, model, decision, nil, domainusage.StatusFailed, "failed to read upstream response", start, false)
 		h.respondError(c, http.StatusBadGateway, "api_error", "failed to read upstream response")
 		return
 	}
@@ -275,6 +290,7 @@ func (h *MessagesHandler) handleNonStreaming(
 			zap.Duration("elapsed", time.Since(start)),
 			zap.String("body", truncateStr(string(respBody), 500)),
 		)
+		h.publishUsage(requestID, model, decision, nil, domainusage.StatusFailed, truncateStr(string(respBody), 200), start, false)
 		h.respondError(c, resp.StatusCode, "api_error", string(respBody))
 		return
 	}
@@ -299,9 +315,13 @@ func (h *MessagesHandler) handleNonStreaming(
 		anthropicResp, err = h.convertChatCompletionToAnthropic(respBody, model)
 	}
 	if err != nil {
+		h.publishUsage(requestID, model, decision, nil, domainusage.StatusFailed, "failed to convert response: "+err.Error(), start, false)
 		h.respondError(c, http.StatusInternalServerError, "api_error", "failed to convert response: "+err.Error())
 		return
 	}
+
+	// Publish successful usage
+	h.publishUsage(requestID, model, decision, anthropicResp.Usage, domainusage.StatusDone, "", start, false)
 
 	c.JSON(http.StatusOK, anthropicResp)
 }
@@ -355,6 +375,7 @@ func (h *MessagesHandler) handleStreaming(
 			zap.Duration("elapsed", time.Since(start)),
 			zap.Error(err),
 		)
+		h.publishUsage(requestID, model, decision, nil, domainusage.StatusFailed, err.Error(), start, true)
 		h.respondError(c, http.StatusBadGateway, "api_error", "upstream request failed: "+err.Error())
 		return
 	}
@@ -370,6 +391,7 @@ func (h *MessagesHandler) handleStreaming(
 			zap.Duration("elapsed", time.Since(start)),
 			zap.String("body", truncateStr(string(respBody), 500)),
 		)
+		h.publishUsage(requestID, model, decision, nil, domainusage.StatusFailed, truncateStr(string(respBody), 200), start, true)
 		h.respondError(c, resp.StatusCode, "api_error", string(respBody))
 		return
 	}
@@ -391,7 +413,8 @@ func (h *MessagesHandler) handleStreaming(
 
 	// Messages API returns native Anthropic SSE - pass through directly
 	if useMessagesAPI {
-		h.streamPassthrough(ctx, resp.Body, writer, requestID, model)
+		result := h.streamPassthrough(ctx, resp.Body, writer, requestID, model)
+		h.publishUsage(requestID, model, decision, result.usage, result.status, result.errorMsg, start, true)
 		h.logger.Debug("copilot streaming request completed",
 			zap.String("url", url),
 			zap.String("model", model),
@@ -419,6 +442,7 @@ func (h *MessagesHandler) handleStreaming(
 				zap.Duration("elapsed", time.Since(start)),
 				zap.Error(ctx.Err()),
 			)
+			h.publishUsage(requestID, model, decision, streamState.GetUsage(), domainusage.StatusCanceled, ctx.Err().Error(), start, true)
 			return
 		default:
 		}
@@ -450,6 +474,7 @@ func (h *MessagesHandler) handleStreaming(
 						bytesSent += nWritten
 					}
 					writer.Flush()
+					h.publishUsage(requestID, model, decision, streamState.GetUsage(), domainusage.StatusDone, "", start, true)
 					h.logger.Debug("copilot streaming request completed",
 						zap.String("url", url),
 						zap.String("model", model),
@@ -471,6 +496,7 @@ func (h *MessagesHandler) handleStreaming(
 					nWritten, err := writer.WriteString(evt)
 					if err != nil {
 						h.logger.Error("failed to write SSE event", zap.Error(err))
+						h.publishUsage(requestID, model, decision, streamState.GetUsage(), domainusage.StatusFailed, "write error: "+err.Error(), start, true)
 						return
 					}
 					bytesSent += nWritten
@@ -487,6 +513,7 @@ func (h *MessagesHandler) handleStreaming(
 					bytesSent += nWritten
 				}
 				writer.Flush()
+				h.publishUsage(requestID, model, decision, streamState.GetUsage(), domainusage.StatusDone, "", start, true)
 				h.logger.Debug("copilot streaming request completed",
 					zap.String("url", url),
 					zap.String("model", model),
@@ -503,17 +530,29 @@ func (h *MessagesHandler) handleStreaming(
 					zap.Duration("elapsed", time.Since(start)),
 					zap.Error(readErr),
 				)
+				h.publishUsage(requestID, model, decision, streamState.GetUsage(), domainusage.StatusFailed, "read error: "+readErr.Error(), start, true)
 			}
 			return
 		}
 	}
 }
 
+// streamPassthroughResult contains the result of a passthrough stream.
+type streamPassthroughResult struct {
+	usage    *anthropic.Usage
+	status   domainusage.Status
+	errorMsg string
+}
+
 // streamPassthrough directly passes SSE events from upstream to client.
 // Used for Messages API which returns native Anthropic format.
-func (h *MessagesHandler) streamPassthrough(ctx context.Context, src io.Reader, writer io.Writer, requestID string, model string) {
+// Returns usage info extracted from message_delta events.
+func (h *MessagesHandler) streamPassthrough(ctx context.Context, src io.Reader, writer io.Writer, requestID string, model string) streamPassthroughResult {
 	buf := make([]byte, 4096)
+	var partial []byte
 	bytesSent := 0
+	result := streamPassthroughResult{status: domainusage.StatusDone}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -523,21 +562,32 @@ func (h *MessagesHandler) streamPassthrough(ctx context.Context, src io.Reader, 
 				zap.Int("bytes_sent", bytesSent),
 				zap.Error(ctx.Err()),
 			)
-			return
+			result.status = domainusage.StatusCanceled
+			result.errorMsg = ctx.Err().Error()
+			return result
 		default:
 		}
 
 		n, err := src.Read(buf)
 		if n > 0 {
-			nWritten, writeErr := writer.Write(buf[:n])
+			chunk := buf[:n]
+			partial = append(partial, chunk...)
+
+			// Write to client
+			nWritten, writeErr := writer.Write(chunk)
 			if writeErr != nil {
 				h.logger.Error("failed to write passthrough data", zap.Error(writeErr))
-				return
+				result.status = domainusage.StatusFailed
+				result.errorMsg = "write error: " + writeErr.Error()
+				return result
 			}
 			bytesSent += nWritten
 			if flusher, ok := writer.(interface{ Flush() }); ok {
 				flusher.Flush()
 			}
+
+			// Try to extract usage from message_delta events
+			result.usage = h.extractUsageFromSSEBuffer(partial, result.usage)
 		}
 		if err != nil {
 			if err != io.EOF {
@@ -547,10 +597,44 @@ func (h *MessagesHandler) streamPassthrough(ctx context.Context, src io.Reader, 
 					zap.Int("bytes_sent", bytesSent),
 					zap.Error(err),
 				)
+				result.status = domainusage.StatusFailed
+				result.errorMsg = "read error: " + err.Error()
 			}
-			return
+			return result
 		}
 	}
+}
+
+// extractUsageFromSSEBuffer tries to extract usage from message_delta events in the buffer.
+func (h *MessagesHandler) extractUsageFromSSEBuffer(data []byte, current *anthropic.Usage) *anthropic.Usage {
+	// Look for message_delta events which contain usage info
+	// Format: event: message_delta\ndata: {..., "usage": {...}}
+	lines := bytes.Split(data, []byte("\n"))
+	for i := 0; i < len(lines)-1; i++ {
+		line := bytes.TrimSpace(lines[i])
+		if bytes.Equal(line, []byte("event: message_delta")) {
+			// Next line should be data
+			if i+1 < len(lines) {
+				dataLine := bytes.TrimSpace(lines[i+1])
+				if bytes.HasPrefix(dataLine, []byte("data: ")) {
+					payload := bytes.TrimPrefix(dataLine, []byte("data: "))
+					var event struct {
+						Usage *struct {
+							InputTokens  int `json:"input_tokens"`
+							OutputTokens int `json:"output_tokens"`
+						} `json:"usage"`
+					}
+					if err := json.Unmarshal(payload, &event); err == nil && event.Usage != nil {
+						return &anthropic.Usage{
+							InputTokens:  event.Usage.InputTokens,
+							OutputTokens: event.Usage.OutputTokens,
+						}
+					}
+				}
+			}
+		}
+	}
+	return current
 }
 
 func (h *MessagesHandler) startSSEHeartbeat(
@@ -906,6 +990,54 @@ func (h *MessagesHandler) respondError(c *gin.Context, status int, errType, mess
 			"message": message,
 		},
 	})
+}
+
+// publishUsage publishes a usage record for tracking.
+func (h *MessagesHandler) publishUsage(
+	requestID string,
+	model string,
+	decision *domainprovider.RoutingDecision,
+	usage *anthropic.Usage,
+	status domainusage.Status,
+	errorMsg string,
+	startedAt time.Time,
+	stream bool,
+) {
+	if h.usagePublisher == nil {
+		return
+	}
+
+	var promptTokens, completionTokens int
+	if usage != nil {
+		promptTokens = usage.InputTokens
+		completionTokens = usage.OutputTokens
+	}
+
+	var provider, credentialID, credentialType, credentialAccountID string
+	if decision != nil {
+		provider = string(decision.ProviderID)
+		credentialID = decision.CredentialID
+		credentialType = decision.CredentialType
+		credentialAccountID = decision.CredentialAccountID
+	}
+
+	record := domainusage.UsageRecord{
+		RequestID:           requestID,
+		Model:               model,
+		Provider:            provider,
+		CredentialID:        credentialID,
+		CredentialType:      credentialType,
+		CredentialAccountID: credentialAccountID,
+		PromptTokens:        promptTokens,
+		CompletionTokens:    completionTokens,
+		Status:              status,
+		ErrorMessage:        errorMsg,
+		StartedAt:           startedAt,
+		CompletedAt:         time.Now(),
+		Stream:              stream,
+	}
+
+	h.usagePublisher.Publish(record)
 }
 
 func truncateStr(s string, maxLen int) string {

@@ -10,8 +10,14 @@ import (
 
 	domaincompletion "github.com/duchoang/llmpool/internal/domain/completion"
 	domainprovider "github.com/duchoang/llmpool/internal/domain/provider"
+	domainusage "github.com/duchoang/llmpool/internal/domain/usage"
 	"go.uber.org/zap"
 )
+
+// UsagePublisher is used to publish usage records.
+type UsagePublisher interface {
+	Publish(record domainusage.UsageRecord)
+}
 
 // ServiceConfig holds configuration for the completion service.
 type ServiceConfig struct {
@@ -29,13 +35,14 @@ func DefaultServiceConfig() ServiceConfig {
 
 // service implements the CompletionService interface.
 type service struct {
-	router        Router
-	registry      ProviderRegistry
-	healthTracker ProviderHealthTracker
-	client        ProviderClient
-	refresher     CredentialRefresher
-	config        ServiceConfig
-	logger        *zap.Logger
+	router         Router
+	registry       ProviderRegistry
+	healthTracker  ProviderHealthTracker
+	client         ProviderClient
+	refresher      CredentialRefresher
+	usagePublisher UsagePublisher
+	config         ServiceConfig
+	logger         *zap.Logger
 }
 
 // NewService creates a new completion service.
@@ -59,6 +66,12 @@ func NewService(
 	}
 }
 
+// SetUsagePublisher sets the usage publisher for tracking.
+// This is optional - if not set, usage tracking is disabled.
+func (s *service) SetUsagePublisher(publisher UsagePublisher) {
+	s.usagePublisher = publisher
+}
+
 // ChatCompletion handles a chat completion request with routing and fallback.
 func (s *service) ChatCompletion(
 	ctx context.Context,
@@ -69,23 +82,36 @@ func (s *service) ChatCompletion(
 		return nil, err
 	}
 
+	requestStartedAt := time.Now()
 	var excludeProviders []domainprovider.ProviderID
 	var lastAPIErr *domaincompletion.APIError
+	var lastErr error
+	var lastDecision *domainprovider.RoutingDecision
 
 	for attempt := 0; attempt < s.config.MaxFallbackAttempts; attempt++ {
+		if ctx.Err() != nil {
+			err := ctx.Err()
+			s.publishUsage(req, lastDecision, nil, err, requestStartedAt, false)
+			return nil, domaincompletion.ErrInternalServer(err.Error())
+		}
+
 		// Route to a provider (with optional provider hint)
 		decision, err := s.router.RouteWithHint(ctx, req.Model, req.ProviderHint, excludeProviders)
 		if err != nil {
 			// No more providers available
 			if lastAPIErr != nil {
+				s.publishUsage(req, lastDecision, nil, lastAPIErr, requestStartedAt, false)
 				return nil, lastAPIErr
 			}
 			var apiErr *domaincompletion.APIError
 			if errors.As(err, &apiErr) {
+				s.publishUsage(req, lastDecision, nil, apiErr, requestStartedAt, false)
 				return nil, apiErr
 			}
+			s.publishUsage(req, lastDecision, nil, err, requestStartedAt, false)
 			return nil, domaincompletion.ErrInternalServer(err.Error())
 		}
+		lastDecision = decision
 
 		s.logger.Debug("attempting provider",
 			zap.String("provider", string(decision.ProviderID)),
@@ -112,6 +138,8 @@ func (s *service) ChatCompletion(
 						zap.String("credential_account_id", decision.CredentialAccountID),
 						zap.Duration("duration", duration),
 					)
+					// Publish usage for successful retry
+					s.publishUsage(req, decision, retryResp, nil, requestStartedAt, false)
 					return retryResp, nil
 				}
 				err = retryErr
@@ -129,8 +157,11 @@ func (s *service) ChatCompletion(
 				zap.String("credential_account_id", decision.CredentialAccountID),
 				zap.Duration("duration", duration),
 			)
+			// Publish usage for successful completion
+			s.publishUsage(req, decision, resp, nil, requestStartedAt, false)
 			return resp, nil
 		}
+		lastErr = err
 
 		// Handle error
 		s.logger.Warn("provider request failed",
@@ -165,6 +196,7 @@ func (s *service) ChatCompletion(
 			}
 
 			// Client errors (4xx except 429) - don't retry, return error
+			s.publishUsage(req, decision, nil, apiErr, requestStartedAt, false)
 			return nil, apiErr
 		}
 
@@ -175,7 +207,11 @@ func (s *service) ChatCompletion(
 
 	// All attempts failed
 	if lastAPIErr != nil {
+		s.publishUsage(req, lastDecision, nil, lastAPIErr, requestStartedAt, false)
 		return nil, lastAPIErr
+	}
+	if lastErr != nil {
+		s.publishUsage(req, lastDecision, nil, lastErr, requestStartedAt, false)
 	}
 	return nil, domaincompletion.ErrAllProvidersFailed(req.Model, s.config.MaxFallbackAttempts)
 }
@@ -338,17 +374,28 @@ func (s *service) ChatCompletionStream(
 
 	var excludeProviders []domainprovider.ProviderID
 	var lastErr error
+	startTime := time.Now()
+	var lastDecision *domainprovider.RoutingDecision
 
 	for attempt := 0; attempt < s.config.MaxFallbackAttempts; attempt++ {
+		if ctx.Err() != nil {
+			err := ctx.Err()
+			s.publishUsage(req, lastDecision, nil, err, startTime, true)
+			return domaincompletion.ErrInternalServer(err.Error())
+		}
+
 		// Route to a provider (with optional provider hint)
 		decision, err := s.router.RouteWithHint(ctx, req.Model, req.ProviderHint, excludeProviders)
 		if err != nil {
 			var apiErr *domaincompletion.APIError
 			if errors.As(err, &apiErr) {
+				s.publishUsage(req, lastDecision, nil, apiErr, startTime, true)
 				return apiErr
 			}
+			s.publishUsage(req, lastDecision, nil, err, startTime, true)
 			return domaincompletion.ErrInternalServer(err.Error())
 		}
+		lastDecision = decision
 
 		s.logger.Debug("attempting streaming to provider",
 			zap.String("provider", string(decision.ProviderID)),
@@ -410,6 +457,8 @@ func (s *service) ChatCompletionStream(
 			}
 
 			s.healthTracker.MarkSuccess(decision.ProviderID)
+			// Publish usage for successful stream (token counts not available for streaming)
+			s.publishUsage(req, decision, nil, nil, startTime, true)
 			return nil
 		}
 
@@ -421,8 +470,10 @@ func (s *service) ChatCompletionStream(
 
 	// All attempts failed
 	if lastErr != nil {
+		s.publishUsage(req, lastDecision, nil, lastErr, startTime, true)
 		return domaincompletion.ErrAllProvidersFailed(req.Model, s.config.MaxFallbackAttempts)
 	}
+	s.publishUsage(req, lastDecision, nil, domaincompletion.ErrNoAvailableProvider(req.Model), startTime, true)
 	return domaincompletion.ErrNoAvailableProvider(req.Model)
 }
 
@@ -444,4 +495,69 @@ func (s *service) validateRequest(req domaincompletion.ChatCompletionRequest) er
 		return domaincompletion.ErrMissingMessages()
 	}
 	return nil
+}
+
+// publishUsage publishes a usage record for tracking.
+func (s *service) publishUsage(
+	req domaincompletion.ChatCompletionRequest,
+	decision *domainprovider.RoutingDecision,
+	resp *domaincompletion.ChatCompletionResponse,
+	err error,
+	startTime time.Time,
+	stream bool,
+) {
+	if s.usagePublisher == nil {
+		return
+	}
+
+	completedAt := time.Now()
+
+	// Determine status and extract token usage
+	var status domainusage.Status
+	var errMsg string
+	var promptTokens, completionTokens int
+
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			status = domainusage.StatusCanceled
+		} else {
+			status = domainusage.StatusFailed
+		}
+		errMsg = err.Error()
+	} else if resp != nil && resp.Usage != nil {
+		status = domainusage.StatusDone
+		promptTokens = resp.Usage.PromptTokens
+		completionTokens = resp.Usage.CompletionTokens
+	} else {
+		status = domainusage.StatusDone
+	}
+
+	credentialID := ""
+	credentialType := ""
+	credentialAccountID := ""
+	providerID := ""
+	if decision != nil {
+		credentialID = decision.CredentialID
+		credentialType = decision.CredentialType
+		credentialAccountID = decision.CredentialAccountID
+		providerID = string(decision.ProviderID)
+	}
+
+	record := domainusage.UsageRecord{
+		RequestID:           req.RequestID,
+		Model:               req.Model,
+		Provider:            providerID,
+		CredentialID:        credentialID,
+		CredentialType:      credentialType,
+		CredentialAccountID: credentialAccountID,
+		PromptTokens:        promptTokens,
+		CompletionTokens:    completionTokens,
+		Status:              status,
+		ErrorMessage:        errMsg,
+		StartedAt:           startTime,
+		CompletedAt:         completedAt,
+		Stream:              stream,
+	}
+
+	s.usagePublisher.Publish(record)
 }

@@ -29,6 +29,10 @@ type ChatCompletionRequest struct {
 	// Set via X-Provider header or provider prefix in model name (e.g., "copilot/gpt-5").
 	// This field is populated by the handler before passing to the service.
 	ProviderHint string `json:"-"`
+
+	// RequestID is an internal field (not from JSON) for tracking/logging.
+	// Set from X-Request-ID header by the handler.
+	RequestID string `json:"-"`
 }
 
 // Message represents a chat message.

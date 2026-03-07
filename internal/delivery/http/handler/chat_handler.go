@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/duchoang/llmpool/internal/delivery/http/middleware"
 	domaincompletion "github.com/duchoang/llmpool/internal/domain/completion"
 	"github.com/duchoang/llmpool/internal/infra/provider"
 	usecasecompletion "github.com/duchoang/llmpool/internal/usecase/completion"
@@ -50,9 +51,13 @@ func (h *ChatHandler) ChatCompletion(c *gin.Context) {
 	// Extract provider hint from header or model prefix
 	req.ProviderHint = h.extractProviderHint(c, &req)
 
+	// Set request ID for tracking
+	req.RequestID = middleware.GetRequestID(c)
+
 	h.logger.Debug("chat completion request",
 		zap.String("model", req.Model),
 		zap.String("provider_hint", req.ProviderHint),
+		zap.String("request_id", req.RequestID),
 		zap.Bool("stream", req.Stream),
 		zap.Int("messages", len(req.Messages)),
 	)

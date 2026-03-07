@@ -299,9 +299,38 @@ func TestLoad_RequiresOAuthCodexSessionTTL(t *testing.T) {
 }
 
 func TestLoad_RequiresOAuthCodexClientID(t *testing.T) {
-	rootDir, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatalf("resolve root dir: %v", err)
+	// Create a temp directory with a config file that has empty client_id
+	tmpDir := t.TempDir()
+	configDir := filepath.Join(tmpDir, "configs")
+	if err := os.MkdirAll(configDir, 0o750); err != nil {
+		t.Fatalf("mkdir configs: %v", err)
+	}
+
+	// Write a minimal config with empty client_id
+	configContent := `
+server:
+  host: 0.0.0.0
+  port: 8080
+log:
+  level: info
+  format: text
+orchestrator:
+  lb_strategy: round-robin
+credential:
+  refresh_interval: 1m
+oauth:
+  codex:
+    client_id: ""
+    auth_url: https://auth.openai.com/oauth/authorize
+    token_url: https://auth.openai.com/oauth/token
+    redirect_uri: http://localhost:1455/auth/callback
+    device_url: https://auth.openai.com/device/code
+    poll_url: https://auth.openai.com/device/poll
+    timeout: 30s
+    session_ttl: 600s
+`
+	if err := os.WriteFile(filepath.Join(configDir, "default.yml"), []byte(configContent), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
 	}
 
 	oldWd, err := os.Getwd()
@@ -312,12 +341,13 @@ func TestLoad_RequiresOAuthCodexClientID(t *testing.T) {
 		_ = os.Chdir(oldWd)
 	}()
 
-	if err := os.Chdir(rootDir); err != nil {
-		t.Fatalf("chdir root: %v", err)
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir tmp: %v", err)
 	}
 
-	t.Setenv("LLMPOOL_SECURITY_ENCRYPTION_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
+	// Ensure env var doesn't override (in case a parallel test sets it)
 	t.Setenv("LLMPOOL_OAUTH_CODEX_CLIENT_ID", "")
+	t.Setenv("LLMPOOL_SECURITY_ENCRYPTION_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
 
 	_, err = Load()
 	if err == nil {

@@ -23,6 +23,8 @@ type Config struct {
 	Liveness     LivenessConfig            `mapstructure:"liveness"`
 	Routing      RoutingConfig             `mapstructure:"routing"`
 	MessagesAPI  MessagesAPIConfig         `mapstructure:"messages_api"`
+	Usage        UsageConfig               `mapstructure:"usage"`
+	CORS         CORSConfig                `mapstructure:"cors"`
 	Providers    map[string]ProviderConfig `mapstructure:"providers"`
 }
 
@@ -168,6 +170,43 @@ type MessagesAPIConfig struct {
 	// CompactUseSmallModel controls whether compact/summarization requests use SmallModel.
 	// Default: false (use originally requested model)
 	CompactUseSmallModel bool `mapstructure:"compact_use_small_model"`
+}
+
+// UsageConfig holds configuration for usage tracking.
+type UsageConfig struct {
+	// Enabled enables usage tracking
+	Enabled bool `mapstructure:"enabled"`
+
+	// QueueSize is the size of the internal usage queue
+	QueueSize int `mapstructure:"queue_size"`
+
+	// BatchSize is the number of records to process in a batch
+	BatchSize int `mapstructure:"batch_size"`
+
+	// FlushInterval is how often to flush batches
+	FlushInterval time.Duration `mapstructure:"flush_interval"`
+
+	// StatsCacheTTL is how long to cache dashboard stats
+	StatsCacheTTL time.Duration `mapstructure:"stats_cache_ttl"`
+
+	// StatsRebuildInterval is how often to rebuild aggregated dashboard stats
+	StatsRebuildInterval time.Duration `mapstructure:"stats_rebuild_interval"`
+
+	// RetentionDays is the number of days to retain audit logs
+	RetentionDays int `mapstructure:"retention_days"`
+
+	// RetentionCleanupInterval is how often to run retention cleanup
+	RetentionCleanupInterval time.Duration `mapstructure:"retention_cleanup_interval"`
+}
+
+// CORSConfig holds configuration for CORS.
+type CORSConfig struct {
+	// Enabled enables CORS
+	Enabled bool `mapstructure:"enabled"`
+
+	// AllowedOrigins is the list of allowed origins for CORS
+	// Use "*" to allow all origins (not recommended for production)
+	AllowedOrigins []string `mapstructure:"allowed_origins"`
 }
 
 func Load() (*Config, error) {
@@ -332,6 +371,31 @@ func Load() (*Config, error) {
 		}
 	}
 
+	// Validate usage tracking config if enabled
+	if cfg.Usage.Enabled {
+		if cfg.Usage.QueueSize <= 0 {
+			return nil, fmt.Errorf("usage.queue_size must be > 0 when usage tracking is enabled")
+		}
+		if cfg.Usage.BatchSize <= 0 {
+			return nil, fmt.Errorf("usage.batch_size must be > 0 when usage tracking is enabled")
+		}
+		if cfg.Usage.FlushInterval <= 0 {
+			return nil, fmt.Errorf("usage.flush_interval must be > 0 when usage tracking is enabled")
+		}
+		if cfg.Usage.StatsCacheTTL <= 0 {
+			return nil, fmt.Errorf("usage.stats_cache_ttl must be > 0 when usage tracking is enabled")
+		}
+		if cfg.Usage.StatsRebuildInterval <= 0 {
+			return nil, fmt.Errorf("usage.stats_rebuild_interval must be > 0 when usage tracking is enabled")
+		}
+		if cfg.Usage.RetentionDays <= 0 {
+			return nil, fmt.Errorf("usage.retention_days must be > 0 when usage tracking is enabled")
+		}
+		if cfg.Usage.RetentionCleanupInterval <= 0 {
+			return nil, fmt.Errorf("usage.retention_cleanup_interval must be > 0 when usage tracking is enabled")
+		}
+	}
+
 	return &cfg, nil
 }
 
@@ -400,4 +464,18 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("messages_api.small_model", "")                    // Empty = use requested model
 	v.SetDefault("messages_api.default_reasoning_effort", "medium") // low, medium, high, max
 	v.SetDefault("messages_api.compact_use_small_model", false)     // Don't override model for compact
+
+	// Usage tracking defaults
+	v.SetDefault("usage.enabled", true)
+	v.SetDefault("usage.queue_size", 10000)
+	v.SetDefault("usage.batch_size", 100)
+	v.SetDefault("usage.flush_interval", "5s")
+	v.SetDefault("usage.stats_cache_ttl", "5m")
+	v.SetDefault("usage.stats_rebuild_interval", "15m")
+	v.SetDefault("usage.retention_days", 90)
+	v.SetDefault("usage.retention_cleanup_interval", "24h")
+
+	// CORS defaults
+	v.SetDefault("cors.enabled", true)
+	v.SetDefault("cors.allowed_origins", []string{"http://localhost:3000", "http://localhost:5173"})
 }

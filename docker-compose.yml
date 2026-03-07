@@ -36,6 +36,20 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: llmpool-web
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
+      NEXT_PUBLIC_USE_MOCK_DATA: "false"
+    depends_on:
+      app:
+        condition: service_started
+
   postgres:
     image: postgres:16-alpine
     container_name: llmpool-postgres
