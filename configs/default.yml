@@ -131,8 +131,6 @@ usage:
   queue_size: 10000
   batch_size: 100
   flush_interval: 5s
-  stats_cache_ttl: 5m
-  stats_rebuild_interval: 15m
   retention_days: 90
   retention_cleanup_interval: 24h
 

@@ -11,37 +11,19 @@ import (
 
 const dailyKeyLayout = "2006-01-02"
 
-// StatsServiceConfig holds configuration for the stats service.
-type StatsServiceConfig struct {
-	CacheTTL time.Duration // How long to cache stats
-}
-
-// DefaultStatsServiceConfig returns sensible defaults.
-func DefaultStatsServiceConfig() StatsServiceConfig {
-	return StatsServiceConfig{
-		CacheTTL: 5 * time.Minute,
-	}
-}
-
 // statsService implements StatsService.
 type statsService struct {
 	repo   AuditRepository
-	cache  StatsCache
-	config StatsServiceConfig
 	logger *zap.Logger
 }
 
 // NewStatsService creates a new stats service.
 func NewStatsService(
 	repo AuditRepository,
-	cache StatsCache,
-	config StatsServiceConfig,
 	logger *zap.Logger,
 ) StatsService {
 	return &statsService{
 		repo:   repo,
-		cache:  cache,
-		config: config,
 		logger: logger,
 	}
 }
@@ -76,13 +58,6 @@ func periodToTimeRangeFromNow(now time.Time, period string) (start, end time.Tim
 
 // GetDashboardStats returns dashboard stats for the given period.
 func (s *statsService) GetDashboardStats(ctx context.Context, period string) (*domainusage.DashboardStats, error) {
-	// Try cache first
-	if cached, err := s.cache.GetDashboardStats(ctx, period); err == nil && cached != nil {
-		s.logger.Debug("returning cached stats", zap.String("period", period))
-		return cached, nil
-	}
-
-	// Build from database
 	startTime, endTime, err := periodToTimeRange(period)
 	if err != nil {
 		return nil, err
@@ -98,55 +73,7 @@ func (s *statsService) GetDashboardStats(ctx context.Context, period string) (*d
 		EndTime:   endTime,
 	}
 
-	// Cache the result
-	if cacheErr := s.cache.SetDashboardStats(ctx, period, *stats, s.config.CacheTTL); cacheErr != nil {
-		s.logger.Warn("failed to cache stats", zap.Error(cacheErr))
-	}
-
 	return stats, nil
-}
-
-// RebuildStats rebuilds cached stats from PostgreSQL.
-func (s *statsService) RebuildStats(ctx context.Context) error {
-	s.logger.Info("rebuilding stats from PostgreSQL")
-
-	// Invalidate existing cache
-	if err := s.cache.InvalidateStats(ctx); err != nil {
-		s.logger.Warn("failed to invalidate cache", zap.Error(err))
-	}
-
-	// Rebuild for all standard periods
-	periods := []string{"today", "7d", "30d", "90d", "365d"}
-	for _, period := range periods {
-		startTime, endTime, err := periodToTimeRange(period)
-		if err != nil {
-			continue
-		}
-
-		stats, err := s.buildStats(ctx, startTime, endTime)
-		if err != nil {
-			s.logger.Error("failed to build stats",
-				zap.String("period", period),
-				zap.Error(err),
-			)
-			continue
-		}
-
-		stats.Period = domainusage.StatsPeriod{
-			StartTime: startTime,
-			EndTime:   endTime,
-		}
-
-		if cacheErr := s.cache.SetDashboardStats(ctx, period, *stats, s.config.CacheTTL); cacheErr != nil {
-			s.logger.Warn("failed to cache stats",
-				zap.String("period", period),
-				zap.Error(cacheErr),
-			)
-		}
-	}
-
-	s.logger.Info("stats rebuild complete")
-	return nil
 }
 
 func (s *statsService) buildStats(ctx context.Context, startTime, endTime time.Time) (*domainusage.DashboardStats, error) {

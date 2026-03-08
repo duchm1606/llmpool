@@ -180,7 +180,6 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 			usageStatsLogger,
 		)
 		r.GET("/v1/internal/usage/stats", usageStatsHandler.GetDashboardStats)
-		r.POST("/v1/internal/usage/stats/rebuild", usageStatsHandler.RebuildStats)
 		r.GET("/v1/internal/usage/audit", usageStatsHandler.ListAuditLogs)
 		r.GET("/v1/internal/usage/audit/:request_id", usageStatsHandler.GetAuditLogByRequestID)
 		r.POST("/v1/internal/usage/cleanup", usageStatsHandler.RunRetentionCleanup)

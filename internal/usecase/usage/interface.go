@@ -71,26 +71,11 @@ type AuditLogFilter struct {
 	Status       string
 }
 
-// StatsCache provides caching for dashboard stats.
-type StatsCache interface {
-	// GetDashboardStats returns cached dashboard stats.
-	GetDashboardStats(ctx context.Context, period string) (*domainusage.DashboardStats, error)
-
-	// SetDashboardStats caches dashboard stats.
-	SetDashboardStats(ctx context.Context, period string, stats domainusage.DashboardStats, ttl time.Duration) error
-
-	// InvalidateStats invalidates all cached stats.
-	InvalidateStats(ctx context.Context) error
-}
-
 // StatsService provides dashboard statistics.
 type StatsService interface {
 	// GetDashboardStats returns dashboard stats for the given period.
-	// Period can be: "today", "7d", "30d", "90d"
+	// Period can be: "today", "7d", "30d", "90d", "365d"
 	GetDashboardStats(ctx context.Context, period string) (*domainusage.DashboardStats, error)
-
-	// RebuildStats rebuilds cached stats from PostgreSQL.
-	RebuildStats(ctx context.Context) error
 
 	// GetAuditLogs returns paginated audit logs.
 	GetAuditLogs(ctx context.Context, filter AuditLogFilter) ([]domainusage.AuditLog, int64, error)

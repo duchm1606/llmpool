@@ -186,12 +186,6 @@ type UsageConfig struct {
 	// FlushInterval is how often to flush batches
 	FlushInterval time.Duration `mapstructure:"flush_interval"`
 
-	// StatsCacheTTL is how long to cache dashboard stats
-	StatsCacheTTL time.Duration `mapstructure:"stats_cache_ttl"`
-
-	// StatsRebuildInterval is how often to rebuild aggregated dashboard stats
-	StatsRebuildInterval time.Duration `mapstructure:"stats_rebuild_interval"`
-
 	// RetentionDays is the number of days to retain audit logs
 	RetentionDays int `mapstructure:"retention_days"`
 
@@ -378,12 +372,6 @@ func Load() (*Config, error) {
 		if cfg.Usage.FlushInterval <= 0 {
 			return nil, fmt.Errorf("usage.flush_interval must be > 0 when usage tracking is enabled")
 		}
-		if cfg.Usage.StatsCacheTTL <= 0 {
-			return nil, fmt.Errorf("usage.stats_cache_ttl must be > 0 when usage tracking is enabled")
-		}
-		if cfg.Usage.StatsRebuildInterval <= 0 {
-			return nil, fmt.Errorf("usage.stats_rebuild_interval must be > 0 when usage tracking is enabled")
-		}
 		if cfg.Usage.RetentionDays <= 0 {
 			return nil, fmt.Errorf("usage.retention_days must be > 0 when usage tracking is enabled")
 		}
@@ -466,8 +454,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("usage.queue_size", 10000)
 	v.SetDefault("usage.batch_size", 100)
 	v.SetDefault("usage.flush_interval", "5s")
-	v.SetDefault("usage.stats_cache_ttl", "5m")
-	v.SetDefault("usage.stats_rebuild_interval", "15m")
 	v.SetDefault("usage.retention_days", 90)
 	v.SetDefault("usage.retention_cleanup_interval", "24h")
 

@@ -53,17 +53,6 @@ func (h *UsageStatsHandler) GetDashboardStats(c *gin.Context) {
 	c.JSON(http.StatusOK, stats)
 }
 
-// RebuildStats handles POST /v1/internal/usage/stats/rebuild
-func (h *UsageStatsHandler) RebuildStats(c *gin.Context) {
-	if err := h.statsService.RebuildStats(c.Request.Context()); err != nil {
-		h.logger.Error("failed to rebuild stats", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to rebuild stats"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "stats rebuild complete"})
-}
-
 // ListAuditLogs handles GET /v1/internal/usage/audit
 func (h *UsageStatsHandler) ListAuditLogs(c *gin.Context) {
 	// Parse query parameters

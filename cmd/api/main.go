@@ -192,12 +192,10 @@ func main() {
 	var usageStatsService usecaseusage.StatsService
 	var usageRetentionService usecaseusage.RetentionService
 	var retentionWorker *server.RetentionWorker
-	var statsWorker *server.StatsWorker
 
 	if cfg.Usage.Enabled {
-		// Create usage repository and cache
+		// Create usage repository
 		usageRepo := usageinfra.NewPostgresRepository(postgresPool)
-		usageCache := usageinfra.NewRedisStatsCache(redisClient)
 
 		// Create pricing config
 		pricingConfig := domainusage.DefaultPricingConfig()
@@ -216,13 +214,8 @@ func main() {
 		)
 
 		// Create stats service
-		statsServiceCfg := usecaseusage.StatsServiceConfig{
-			CacheTTL: cfg.Usage.StatsCacheTTL,
-		}
 		usageStatsService = usecaseusage.NewStatsService(
 			usageRepo,
-			usageCache,
-			statsServiceCfg,
 			loggerinfra.ForModule("usecase.usage.stats"),
 		)
 
@@ -246,21 +239,10 @@ func main() {
 			retentionWorkerCfg,
 		)
 
-		// Create periodic stats aggregation worker
-		statsWorkerCfg := server.StatsWorkerConfig{
-			RebuildInterval: cfg.Usage.StatsRebuildInterval,
-		}
-		statsWorker = server.NewStatsWorker(
-			usageStatsService,
-			loggerinfra.ForModule("platform.server.stats_worker"),
-			statsWorkerCfg,
-		)
-
 		log.Info("usage tracking enabled",
 			zap.Int("queue_size", cfg.Usage.QueueSize),
 			zap.Int("batch_size", cfg.Usage.BatchSize),
 			zap.Duration("flush_interval", cfg.Usage.FlushInterval),
-			zap.Duration("stats_rebuild_interval", cfg.Usage.StatsRebuildInterval),
 			zap.Int("retention_days", cfg.Usage.RetentionDays),
 		)
 	}
@@ -327,13 +309,6 @@ func main() {
 	if cfg.Usage.Enabled && usageManager != nil {
 		usageManager.Start(shutdownCtx)
 		log.Info("usage manager started")
-
-		if statsWorker != nil {
-			go statsWorker.Start(shutdownCtx)
-			log.Info("stats worker started",
-				zap.Duration("rebuild_interval", cfg.Usage.StatsRebuildInterval),
-			)
-		}
 
 		if retentionWorker != nil {
 			go retentionWorker.Start(shutdownCtx)
