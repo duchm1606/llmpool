@@ -27,11 +27,11 @@ func (r *PostgresRepository) Create(ctx context.Context, log domainusage.AuditLo
 	query := `
 		INSERT INTO usage_audit_logs (
 			id, request_id, model, provider, credential_id, credential_type, credential_account_id,
-			prompt_tokens, completion_tokens, total_tokens,
+			prompt_tokens, cached_tokens, completion_tokens, total_tokens,
 			input_price_micros, output_price_micros, total_price_micros,
 			status, error_message, started_at, completed_at, duration_ms, stream, created_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW()
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW()
 		)
 	`
 
@@ -44,6 +44,7 @@ func (r *PostgresRepository) Create(ctx context.Context, log domainusage.AuditLo
 		log.CredentialType,
 		log.CredentialAccountID,
 		log.PromptTokens,
+		log.CachedTokens,
 		log.CompletionTokens,
 		log.TotalTokens,
 		log.InputPriceMicros,
@@ -67,7 +68,7 @@ func (r *PostgresRepository) Create(ctx context.Context, log domainusage.AuditLo
 func (r *PostgresRepository) List(ctx context.Context, filter usecaseusage.AuditLogFilter) ([]domainusage.AuditLog, error) {
 	query := `
 		SELECT id, request_id, model, provider, credential_id, credential_type, credential_account_id,
-			prompt_tokens, completion_tokens, total_tokens,
+			prompt_tokens, cached_tokens, completion_tokens, total_tokens,
 			input_price_micros, output_price_micros, total_price_micros,
 			status, error_message, started_at, completed_at, duration_ms, stream, created_at
 		FROM usage_audit_logs
@@ -133,7 +134,7 @@ func (r *PostgresRepository) Count(ctx context.Context, filter usecaseusage.Audi
 func (r *PostgresRepository) GetByRequestID(ctx context.Context, requestID string) (*domainusage.AuditLog, error) {
 	query := `
 		SELECT id, request_id, model, provider, credential_id, credential_type, credential_account_id,
-			prompt_tokens, completion_tokens, total_tokens,
+			prompt_tokens, cached_tokens, completion_tokens, total_tokens,
 			input_price_micros, output_price_micros, total_price_micros,
 			status, error_message, started_at, completed_at, duration_ms, stream, created_at
 		FROM usage_audit_logs
@@ -170,6 +171,7 @@ func (r *PostgresRepository) AggregateByModel(ctx context.Context, startTime, en
 			model,
 			COUNT(*) as request_count,
 			COALESCE(SUM(prompt_tokens), 0) as total_prompt_tokens,
+			COALESCE(SUM(cached_tokens), 0) as total_cached_tokens,
 			COALESCE(SUM(completion_tokens), 0) as total_completion_tokens,
 			COALESCE(SUM(total_tokens), 0) as total_tokens,
 			COALESCE(SUM(total_price_micros), 0) as total_price_micros,
@@ -195,6 +197,7 @@ func (r *PostgresRepository) AggregateByModel(ctx context.Context, startTime, en
 			&s.Model,
 			&s.RequestCount,
 			&s.PromptTokens,
+			&s.CachedTokens,
 			&s.CompletionTokens,
 			&s.TotalTokens,
 			&s.TotalPriceMicros,
@@ -220,6 +223,7 @@ func (r *PostgresRepository) AggregateByCredential(ctx context.Context, startTim
 			credential_account_id,
 			COUNT(*) as request_count,
 			COALESCE(SUM(prompt_tokens), 0) as total_prompt_tokens,
+			COALESCE(SUM(cached_tokens), 0) as total_cached_tokens,
 			COALESCE(SUM(completion_tokens), 0) as total_completion_tokens,
 			COALESCE(SUM(total_tokens), 0) as total_tokens,
 			COALESCE(SUM(total_price_micros), 0) as total_price_micros,
@@ -247,6 +251,7 @@ func (r *PostgresRepository) AggregateByCredential(ctx context.Context, startTim
 			&s.CredentialAccountID,
 			&s.RequestCount,
 			&s.PromptTokens,
+			&s.CachedTokens,
 			&s.CompletionTokens,
 			&s.TotalTokens,
 			&s.TotalPriceMicros,
@@ -353,6 +358,7 @@ func (r *PostgresRepository) GetOverview(ctx context.Context, startTime, endTime
 		SELECT
 			COUNT(*) as total_requests,
 			COALESCE(SUM(prompt_tokens), 0) as total_prompt_tokens,
+			COALESCE(SUM(cached_tokens), 0) as total_cached_tokens,
 			COALESCE(SUM(completion_tokens), 0) as total_completion_tokens,
 			COALESCE(SUM(total_tokens), 0) as total_tokens,
 			COALESCE(SUM(total_price_micros), 0) as total_price_micros,
@@ -368,6 +374,7 @@ func (r *PostgresRepository) GetOverview(ctx context.Context, startTime, endTime
 	err := r.pool.QueryRow(ctx, query, startTime, endTime).Scan(
 		&o.TotalRequests,
 		&o.TotalPromptTokens,
+		&o.TotalCachedTokens,
 		&o.TotalCompletionTokens,
 		&o.TotalTokens,
 		&o.TotalPriceMicros,
@@ -410,6 +417,7 @@ func (r *PostgresRepository) scanLogFromRows(rows pgx.Rows) (*domainusage.AuditL
 		&log.CredentialType,
 		&log.CredentialAccountID,
 		&log.PromptTokens,
+		&log.CachedTokens,
 		&log.CompletionTokens,
 		&log.TotalTokens,
 		&log.InputPriceMicros,
@@ -459,6 +467,7 @@ func (r *PostgresRepository) scanLog(row pgx.Row) (*domainusage.AuditLog, error)
 		&log.CredentialType,
 		&log.CredentialAccountID,
 		&log.PromptTokens,
+		&log.CachedTokens,
 		&log.CompletionTokens,
 		&log.TotalTokens,
 		&log.InputPriceMicros,

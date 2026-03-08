@@ -251,14 +251,16 @@ func TestManager_PricingCalculation(t *testing.T) {
 	manager.Start(ctx)
 
 	// Publish a record with known token counts
-	// Opus 4.5: $15/MTok, output=$75/MTok
+	// Opus 4.5: input=$15/MTok, cached=$2/MTok, output=$75/MTok
 	// Model must match exactly a key in pricing config
 	// 1000 input tokens = $0.015 = 15000 microdollars
+	// 200 cached tokens = $0.0004 = 400 microdollars
 	// 500 output tokens = $0.0375 = 37500 microdollars
 	record := domainusage.UsageRecord{
 		RequestID:        "price-test",
 		Model:            "claude-opus-4-5", // Must match pricing config key
 		PromptTokens:     1000,
+		CachedTokens:     200,
 		CompletionTokens: 500,
 		Status:           domainusage.StatusDone,
 	}
@@ -275,9 +277,10 @@ func TestManager_PricingCalculation(t *testing.T) {
 
 	// Verify pricing (Opus 4.5 pricing)
 	log := logs[0]
-	// Input: 1000 * 15 * 1000 / 1_000_000 = 15000 microdollars
-	expectedInputMicros := int64(15000)
-	// Output: 500 * 75 * 1000 / 1_000_000 = 37500 microdollars
+	// Input: 1000 * 15 = 15000 microdollars
+	// Cached: 200 * 2 = 400 microdollars
+	expectedInputMicros := int64(15000 + 400)
+	// Output: 500 * 75 = 37500 microdollars
 	expectedOutputMicros := int64(37500)
 	expectedTotalMicros := expectedInputMicros + expectedOutputMicros
 
@@ -289,5 +292,11 @@ func TestManager_PricingCalculation(t *testing.T) {
 	}
 	if log.TotalPriceMicros != expectedTotalMicros {
 		t.Errorf("expected total price %d microdollars, got %d", expectedTotalMicros, log.TotalPriceMicros)
+	}
+	if log.CachedTokens != 200 {
+		t.Errorf("expected cached tokens 200, got %d", log.CachedTokens)
+	}
+	if log.TotalTokens != 1700 {
+		t.Errorf("expected total tokens 1700, got %d", log.TotalTokens)
 	}
 }

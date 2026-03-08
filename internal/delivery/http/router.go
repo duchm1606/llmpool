@@ -21,6 +21,8 @@ type RouterDeps struct {
 	Development            bool
 	HealthService          usecasehealth.Service
 	ImportService          usecasecredential.ImportService
+	ListService            usecasecredential.ListService
+	StatusService          usecasecredential.StatusService
 	RefreshService         usecasecredential.RefreshService
 	QuotaService           usecasequota.LivenessService
 	OAuthProvider          usecaseoauth.OAuthProvider
@@ -56,6 +58,8 @@ func NewRouter(
 	development bool,
 	healthService usecasehealth.Service,
 	importService usecasecredential.ImportService,
+	listService usecasecredential.ListService,
+	statusService usecasecredential.StatusService,
 	refreshService usecasecredential.RefreshService,
 	oauthProvider usecaseoauth.OAuthProvider,
 	oauthSessionStore usecaseoauth.OAuthSessionStore,
@@ -68,6 +72,8 @@ func NewRouter(
 		Development:            development,
 		HealthService:          healthService,
 		ImportService:          importService,
+		ListService:            listService,
+		StatusService:          statusService,
 		RefreshService:         refreshService,
 		OAuthProvider:          oauthProvider,
 		OAuthSessionStore:      oauthSessionStore,
@@ -98,18 +104,25 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 	if deps.CORSConfig != nil && deps.CORSConfig.Enabled && len(deps.CORSConfig.AllowedOrigins) > 0 {
 		corsConfig := middleware.CORSConfig{
 			AllowedOrigins: deps.CORSConfig.AllowedOrigins,
-			AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+			AllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 			AllowedHeaders: []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Request-ID"},
 			MaxAge:         86400,
 		}
-		r.Use(middleware.CORSForRoutes(corsConfig, "/v1/internal/usage"))
+		r.Use(middleware.CORSForRoutes(
+			corsConfig,
+			"/v1/internal/usage",
+			"/v1/internal/oauth",
+			"/v1/internal/auth-profiles",
+		))
 	}
 
 	healthHandler := handler.NewHealthHandler(deps.HealthService)
 	r.GET("/health", healthHandler.Get)
 
-	credentialHandler := handler.NewCredentialHandler(deps.ImportService)
+	credentialHandler := handler.NewCredentialHandler(deps.ImportService, deps.ListService, deps.StatusService)
 	r.POST("/v1/internal/auth-profiles/import", credentialHandler.Import)
+	r.GET("/v1/internal/auth-profiles", credentialHandler.List)
+	r.PATCH("/v1/internal/auth-profiles/:id", credentialHandler.SetStatus)
 
 	refreshHandler := handler.NewRefreshHandler(deps.RefreshService, deps.QuotaService)
 	r.POST("/v1/internal/auth-profiles/refresh", refreshHandler.Refresh)

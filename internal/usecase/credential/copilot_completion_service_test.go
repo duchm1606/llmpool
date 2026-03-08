@@ -15,7 +15,7 @@ import (
 func TestCopilotCompletionService_CompleteOAuth_Success(t *testing.T) {
 	mockRepo := new(mockRepository)
 	mockEnc := new(mockEncryptor)
-	service := NewCopilotCompletionService(mockRepo, mockEnc)
+	service := NewCopilotCompletionService(mockRepo, mockEnc, nil)
 
 	// Override the time function for deterministic testing
 	svc := service.(*copilotCompletionService)
@@ -33,7 +33,7 @@ func TestCopilotCompletionService_CompleteOAuth_Success(t *testing.T) {
 	}
 
 	expectedEncrypted := "encrypted-copilot-profile"
-	mockEnc.On("Encrypt", mock.Anything).Return(expectedEncrypted, nil)
+	mockEnc.On("Encrypt", mock.Anything).Return(expectedEncrypted, "iv", "tag", nil)
 
 	expectedProfile := domaincredential.Profile{
 		ID:               "generated-uuid",
@@ -67,7 +67,7 @@ func TestCopilotCompletionService_CompleteOAuth_Success(t *testing.T) {
 func TestCopilotCompletionService_CompleteOAuth_EmptyAccountID(t *testing.T) {
 	mockRepo := new(mockRepository)
 	mockEnc := new(mockEncryptor)
-	service := NewCopilotCompletionService(mockRepo, mockEnc)
+	service := NewCopilotCompletionService(mockRepo, mockEnc, nil)
 
 	tokenPayload := domainoauth.TokenPayload{
 		AccessToken:  "copilot-session-token",
@@ -87,7 +87,7 @@ func TestCopilotCompletionService_CompleteOAuth_EmptyAccountID(t *testing.T) {
 func TestCopilotCompletionService_CompleteOAuth_WhitespaceAccountID(t *testing.T) {
 	mockRepo := new(mockRepository)
 	mockEnc := new(mockEncryptor)
-	service := NewCopilotCompletionService(mockRepo, mockEnc)
+	service := NewCopilotCompletionService(mockRepo, mockEnc, nil)
 
 	tokenPayload := domainoauth.TokenPayload{
 		AccessToken:  "copilot-session-token",
@@ -107,7 +107,7 @@ func TestCopilotCompletionService_CompleteOAuth_WhitespaceAccountID(t *testing.T
 func TestCopilotCompletionService_CompleteOAuth_EmptyAccessToken(t *testing.T) {
 	mockRepo := new(mockRepository)
 	mockEnc := new(mockEncryptor)
-	service := NewCopilotCompletionService(mockRepo, mockEnc)
+	service := NewCopilotCompletionService(mockRepo, mockEnc, nil)
 
 	tokenPayload := domainoauth.TokenPayload{
 		AccessToken:  "", // Empty access token
@@ -126,7 +126,7 @@ func TestCopilotCompletionService_CompleteOAuth_EmptyAccessToken(t *testing.T) {
 func TestCopilotCompletionService_CompleteOAuth_EmptyRefreshToken(t *testing.T) {
 	mockRepo := new(mockRepository)
 	mockEnc := new(mockEncryptor)
-	service := NewCopilotCompletionService(mockRepo, mockEnc)
+	service := NewCopilotCompletionService(mockRepo, mockEnc, nil)
 
 	tokenPayload := domainoauth.TokenPayload{
 		AccessToken:  "copilot-session-token",
@@ -145,7 +145,7 @@ func TestCopilotCompletionService_CompleteOAuth_EmptyRefreshToken(t *testing.T) 
 func TestCopilotCompletionService_CompleteOAuth_EncryptError(t *testing.T) {
 	mockRepo := new(mockRepository)
 	mockEnc := new(mockEncryptor)
-	service := NewCopilotCompletionService(mockRepo, mockEnc)
+	service := NewCopilotCompletionService(mockRepo, mockEnc, nil)
 
 	tokenPayload := domainoauth.TokenPayload{
 		AccessToken:  "copilot-session-token",
@@ -153,7 +153,7 @@ func TestCopilotCompletionService_CompleteOAuth_EncryptError(t *testing.T) {
 		ExpiresAt:    time.Now().Add(30 * time.Minute),
 	}
 
-	mockEnc.On("Encrypt", mock.Anything).Return("", errors.New("encryption failed"))
+	mockEnc.On("Encrypt", mock.Anything).Return("", "", "", errors.New("encryption failed"))
 
 	_, err := service.CompleteOAuth(context.Background(), "testuser", tokenPayload)
 
@@ -166,7 +166,7 @@ func TestCopilotCompletionService_CompleteOAuth_EncryptError(t *testing.T) {
 func TestCopilotCompletionService_CompleteOAuth_UpsertError(t *testing.T) {
 	mockRepo := new(mockRepository)
 	mockEnc := new(mockEncryptor)
-	service := NewCopilotCompletionService(mockRepo, mockEnc)
+	service := NewCopilotCompletionService(mockRepo, mockEnc, nil)
 
 	tokenPayload := domainoauth.TokenPayload{
 		AccessToken:  "copilot-session-token",
@@ -174,7 +174,7 @@ func TestCopilotCompletionService_CompleteOAuth_UpsertError(t *testing.T) {
 		ExpiresAt:    time.Now().Add(30 * time.Minute),
 	}
 
-	mockEnc.On("Encrypt", mock.Anything).Return("encrypted", nil)
+	mockEnc.On("Encrypt", mock.Anything).Return("encrypted", "iv", "tag", nil)
 	mockRepo.On("UpsertByTypeAccount", mock.Anything, mock.Anything).Return(domaincredential.Profile{}, errors.New("upsert failed"))
 
 	_, err := service.CompleteOAuth(context.Background(), "testuser", tokenPayload)
@@ -188,7 +188,7 @@ func TestCopilotCompletionService_CompleteOAuth_UpsertError(t *testing.T) {
 func TestCopilotCompletionService_CompleteOAuth_TrimsAccountIDAndEmail(t *testing.T) {
 	mockRepo := new(mockRepository)
 	mockEnc := new(mockEncryptor)
-	service := NewCopilotCompletionService(mockRepo, mockEnc)
+	service := NewCopilotCompletionService(mockRepo, mockEnc, nil)
 
 	svc := service.(*copilotCompletionService)
 	fixedTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -203,7 +203,7 @@ func TestCopilotCompletionService_CompleteOAuth_TrimsAccountIDAndEmail(t *testin
 		Email:        "  test@example.com  ",
 	}
 
-	mockEnc.On("Encrypt", mock.Anything).Return("encrypted", nil)
+	mockEnc.On("Encrypt", mock.Anything).Return("encrypted", "iv", "tag", nil)
 	mockRepo.On("UpsertByTypeAccount", mock.Anything, mock.MatchedBy(func(p domaincredential.Profile) bool {
 		// Should be trimmed
 		return p.AccountID == "testuser" && p.Email == "test@example.com"
@@ -224,7 +224,7 @@ func TestCopilotCompletionService_CompleteOAuth_TrimsAccountIDAndEmail(t *testin
 func TestCopilotCompletionService_CompleteOAuth_GeneratesUUID(t *testing.T) {
 	mockRepo := new(mockRepository)
 	mockEnc := new(mockEncryptor)
-	service := NewCopilotCompletionService(mockRepo, mockEnc)
+	service := NewCopilotCompletionService(mockRepo, mockEnc, nil)
 
 	tokenPayload := domainoauth.TokenPayload{
 		AccessToken:  "copilot-session-token",
@@ -232,7 +232,7 @@ func TestCopilotCompletionService_CompleteOAuth_GeneratesUUID(t *testing.T) {
 		ExpiresAt:    time.Now().Add(30 * time.Minute),
 	}
 
-	mockEnc.On("Encrypt", mock.Anything).Return("encrypted", nil)
+	mockEnc.On("Encrypt", mock.Anything).Return("encrypted", "iv", "tag", nil)
 
 	var capturedID string
 	mockRepo.On("UpsertByTypeAccount", mock.Anything, mock.MatchedBy(func(p domaincredential.Profile) bool {
@@ -246,6 +246,41 @@ func TestCopilotCompletionService_CompleteOAuth_GeneratesUUID(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEmpty(t, capturedID)
 	assert.Len(t, capturedID, 36) // UUID format
+	mockEnc.AssertExpectations(t)
+	mockRepo.AssertExpectations(t)
+}
+
+func TestCopilotCompletionService_CompleteOAuth_RefreshesRegistryOnSuccess(t *testing.T) {
+	mockRepo := new(mockRepository)
+	mockEnc := new(mockEncryptor)
+
+	var refreshCalled bool
+	var refreshedType string
+	var refreshedAccountID string
+	service := NewCopilotCompletionService(mockRepo, mockEnc, func(_ context.Context, profileType, accountID string) {
+		refreshCalled = true
+		refreshedType = profileType
+		refreshedAccountID = accountID
+	})
+
+	tokenPayload := domainoauth.TokenPayload{
+		AccessToken:  "copilot-session-token",
+		RefreshToken: "github-access-token",
+		ExpiresAt:    time.Now().Add(30 * time.Minute),
+	}
+
+	mockEnc.On("Encrypt", mock.Anything).Return("encrypted", "iv", "tag", nil)
+	mockRepo.On("UpsertByTypeAccount", mock.Anything, mock.Anything).Return(domaincredential.Profile{
+		Type:      "copilot",
+		AccountID: "testuser",
+	}, nil)
+
+	_, err := service.CompleteOAuth(context.Background(), "testuser", tokenPayload)
+
+	assert.NoError(t, err)
+	assert.True(t, refreshCalled)
+	assert.Equal(t, "copilot", refreshedType)
+	assert.Equal(t, "testuser", refreshedAccountID)
 	mockEnc.AssertExpectations(t)
 	mockRepo.AssertExpectations(t)
 }

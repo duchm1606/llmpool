@@ -110,9 +110,36 @@ type Choice struct {
 
 // Usage represents token usage statistics.
 type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens            int                  `json:"prompt_tokens"`
+	CompletionTokens        int                  `json:"completion_tokens"`
+	TotalTokens             int                  `json:"total_tokens"`
+	PromptTokensDetails     *PromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+	InputTokensDetails      *PromptTokensDetails `json:"input_tokens_details,omitempty"`
+	CompletionTokensDetails *CompletionDetails   `json:"completion_tokens_details,omitempty"`
+}
+
+// PromptTokensDetails contains prompt/input token breakdown.
+type PromptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens,omitempty"`
+}
+
+// CompletionDetails contains completion token breakdown.
+type CompletionDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
+}
+
+// CachedTokens returns cached input tokens from known provider response fields.
+func (u *Usage) CachedTokens() int {
+	if u == nil {
+		return 0
+	}
+	if u.PromptTokensDetails != nil {
+		return u.PromptTokensDetails.CachedTokens
+	}
+	if u.InputTokensDetails != nil {
+		return u.InputTokensDetails.CachedTokens
+	}
+	return 0
 }
 
 // ChatCompletionChunk represents a streaming chunk.

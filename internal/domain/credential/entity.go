@@ -11,4 +11,6 @@ type Profile struct {
 	Expired          time.Time
 	LastRefreshAt    time.Time
 	EncryptedProfile string
+	EncryptedIV      *string
+	EncryptedTag     *string
 }

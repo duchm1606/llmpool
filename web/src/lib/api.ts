@@ -4,6 +4,11 @@ import {
   TimeSeriesPoint,
   ModelStats,
   CredentialStats,
+  CredentialProfile,
+  CredentialStatusUpdateResponse,
+  CopilotDeviceCodeResponse,
+  CopilotDeviceStatusResponse,
+  CopilotUsage,
   AuditResponse,
   AuditFilters,
 } from '@/types/api';
@@ -13,6 +18,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8
 type BackendOverview = {
   total_requests: number;
   total_prompt_tokens: number;
+  total_cached_tokens: number;
   total_completion_tokens: number;
   total_tokens: number;
   total_price_micros: number;
@@ -44,6 +50,7 @@ type BackendModelStats = {
   model: string;
   request_count: number;
   prompt_tokens: number;
+  cached_tokens: number;
   completion_tokens: number;
   total_tokens: number;
   total_price_micros: number;
@@ -64,6 +71,7 @@ type BackendDashboardStats = {
         credential_account_id: string;
         request_count: number;
         prompt_tokens: number;
+        cached_tokens: number;
         completion_tokens: number;
         total_tokens: number;
         total_price_micros: number;
@@ -98,6 +106,64 @@ type BackendAuditResponse = {
   page: number;
   page_size: number;
   total_pages: number;
+};
+
+type BackendCredentialProfile = {
+  id: string;
+  type: string;
+  account_id: string;
+  email: string;
+  enabled: boolean;
+  expired: string;
+  last_refresh_at: string;
+};
+
+type BackendCredentialProfilesResponse = {
+  data: BackendCredentialProfile[];
+  count: number;
+};
+
+type BackendCredentialStatusUpdateResponse = {
+  id: string;
+  enabled: boolean;
+  expired?: string;
+  last_refresh_at?: string;
+};
+
+type BackendCopilotUsage = {
+  credential_id: string;
+  login?: string;
+  quota_reset_date?: string;
+  quota_reset_date_utc?: string;
+  quota_snapshots?: {
+    chat?: {
+      entitlement: number;
+      remaining: number;
+      percent_remaining: number;
+      quota_id: string;
+      unlimited: boolean;
+    };
+    completions?: {
+      entitlement: number;
+      remaining: number;
+      percent_remaining: number;
+      quota_id: string;
+      unlimited: boolean;
+    };
+    premium_interactions?: {
+      entitlement: number;
+      remaining: number;
+      percent_remaining: number;
+      quota_id: string;
+      unlimited: boolean;
+    };
+  };
+  fetched_at: string;
+};
+
+type BackendCopilotUsagesResponse = {
+  usages: BackendCopilotUsage[];
+  count: number;
 };
 
 const microsToUSD = (micros: number): number => micros / 1_000_000;
@@ -170,6 +236,7 @@ class ApiClient {
       error_rate: total > 0 ? overview.failed_count / total : 0,
       period,
       last_updated_at: stats.generated_at,
+      total_cached_tokens: overview.total_cached_tokens || 0,
     };
   }
 
@@ -209,7 +276,9 @@ class ApiClient {
       provider: inferProvider(model.model),
       requests: model.request_count,
       tokens_in: model.prompt_tokens,
+      cached_tokens: model.cached_tokens,
       tokens_out: model.completion_tokens,
+      total_tokens: model.total_tokens,
       cost: microsToUSD(model.total_price_micros),
       avg_latency_ms: 0,
       error_count: model.failed_count,
@@ -226,12 +295,75 @@ class ApiClient {
       credential_account_id: credential.credential_account_id,
       requests: credential.request_count,
       tokens_in: credential.prompt_tokens,
+      cached_tokens: credential.cached_tokens,
       tokens_out: credential.completion_tokens,
       total_tokens: credential.total_tokens,
       cost: microsToUSD(credential.total_price_micros),
       error_count: credential.failed_count,
       canceled_count: credential.canceled_count,
     }));
+  }
+
+  async getCredentialProfiles(): Promise<CredentialProfile[]> {
+    const payload = await this.fetch<BackendCredentialProfilesResponse>('/v1/internal/auth-profiles');
+    return (payload.data || []).map((profile) => ({
+      id: profile.id,
+      type: profile.type,
+      account_id: profile.account_id,
+      email: profile.email,
+      enabled: profile.enabled,
+      expired: profile.expired,
+      last_refresh_at: profile.last_refresh_at,
+    }));
+  }
+
+  async updateCredentialStatus(credentialId: string, enabled: boolean): Promise<CredentialStatusUpdateResponse> {
+    const payload = await this.fetch<BackendCredentialStatusUpdateResponse>(
+      `/v1/internal/auth-profiles/${encodeURIComponent(credentialId)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled }),
+      }
+    );
+
+    return {
+      id: payload.id,
+      enabled: payload.enabled,
+      expired: payload.expired,
+      last_refresh_at: payload.last_refresh_at,
+    };
+  }
+
+  async refreshCredentialQuota(credentialId: string): Promise<void> {
+    const params = new URLSearchParams();
+    params.set('credential_id', credentialId);
+    await this.fetch<{ message: string }>(`/v1/internal/auth-profiles/refresh?${params.toString()}`, {
+      method: 'POST',
+    });
+  }
+
+  async getCopilotUsages(): Promise<CopilotUsage[]> {
+    const payload = await this.fetch<BackendCopilotUsagesResponse>('/v1/internal/usage');
+    return (payload.usages || []).map((usage) => ({
+      credential_id: usage.credential_id,
+      login: usage.login,
+      quota_reset_date: usage.quota_reset_date,
+      quota_reset_date_utc: usage.quota_reset_date_utc,
+      quota_snapshots: usage.quota_snapshots,
+      fetched_at: usage.fetched_at,
+    }));
+  }
+
+  async startCopilotDeviceFlow(): Promise<CopilotDeviceCodeResponse> {
+    return this.fetch<CopilotDeviceCodeResponse>('/v1/internal/oauth/copilot-device-code', {
+      method: 'POST',
+    });
+  }
+
+  async getCopilotDeviceStatus(deviceCode: string): Promise<CopilotDeviceStatusResponse> {
+    const params = new URLSearchParams();
+    params.set('device_code', deviceCode);
+    return this.fetch<CopilotDeviceStatusResponse>(`/v1/internal/oauth/copilot-device-status?${params.toString()}`);
   }
 
   async getAuditTrail(filters: AuditFilters = {}): Promise<AuditResponse> {

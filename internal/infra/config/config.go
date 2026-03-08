@@ -270,10 +270,6 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("orchestrator.lb_strategy must be one of: round-robin, fill-first")
 	}
 
-	if cfg.Security.EncryptionKey == "" {
-		return nil, fmt.Errorf("security.encryption_key is required")
-	}
-
 	if cfg.Credential.RefreshInterval <= 0 {
 		return nil, fmt.Errorf("credential.refresh_interval must be > 0")
 	}

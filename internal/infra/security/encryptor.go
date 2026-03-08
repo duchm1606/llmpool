@@ -9,6 +9,12 @@ import (
 	"io"
 )
 
+type Encryptor interface {
+	Encrypt(plain string) (string, string, string, error)
+	Decrypt(cipher, iv, tag string) (string, error)
+	ShouldEncrypt() bool
+}
+
 type AesGCMEncryptor struct {
 	aead cipher.AEAD
 }
@@ -36,44 +42,90 @@ func NewAesGCMEncryptor(key string) (*AesGCMEncryptor, error) {
 	return &AesGCMEncryptor{aead: aead}, nil
 }
 
-func (a *AesGCMEncryptor) Encrypt(plain string) (string, error) {
+func (a *AesGCMEncryptor) Encrypt(plain string) (string, string, string, error) {
 	if plain == "" {
-		return "", nil
+		return "", "", "", nil
 	}
 
 	nonce := make([]byte, a.aead.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", fmt.Errorf("generate nonce: %w", err)
+		return "", "", "", fmt.Errorf("generate nonce: %w", err)
 	}
 
-	ciphertext := a.aead.Seal(nil, nonce, []byte(plain), nil)
-	payload := append(nonce, ciphertext...)
+	sealed := a.aead.Seal(nil, nonce, []byte(plain), nil)
+	tagSize := a.aead.Overhead()
+	if len(sealed) < tagSize {
+		return "", "", "", fmt.Errorf("encrypted payload too short")
+	}
 
-	return base64.StdEncoding.EncodeToString(payload), nil
+	ciphertext := sealed[:len(sealed)-tagSize]
+	tag := sealed[len(sealed)-tagSize:]
+
+	return base64.StdEncoding.EncodeToString(ciphertext),
+		base64.StdEncoding.EncodeToString(nonce),
+		base64.StdEncoding.EncodeToString(tag),
+		nil
 }
 
-func (a *AesGCMEncryptor) Decrypt(value string) (string, error) {
+func (a *AesGCMEncryptor) Decrypt(value, iv, tag string) (string, error) {
 	if value == "" {
 		return "", nil
 	}
+	if iv == "" || tag == "" {
+		return "", fmt.Errorf("missing iv or tag")
+	}
 
-	decoded, err := base64.StdEncoding.DecodeString(value)
+	decodedCipher, err := base64.StdEncoding.DecodeString(value)
 	if err != nil {
 		return "", fmt.Errorf("decode encrypted payload: %w", err)
 	}
 
-	nonceSize := a.aead.NonceSize()
-	if len(decoded) <= nonceSize {
-		return "", fmt.Errorf("encrypted payload too short")
+	decodedIV, err := base64.StdEncoding.DecodeString(iv)
+	if err != nil {
+		return "", fmt.Errorf("decode iv: %w", err)
+	}
+	if len(decodedIV) != a.aead.NonceSize() {
+		return "", fmt.Errorf("invalid iv size")
 	}
 
-	nonce := decoded[:nonceSize]
-	ciphertext := decoded[nonceSize:]
+	decodedTag, err := base64.StdEncoding.DecodeString(tag)
+	if err != nil {
+		return "", fmt.Errorf("decode tag: %w", err)
+	}
+	if len(decodedTag) != a.aead.Overhead() {
+		return "", fmt.Errorf("invalid tag size")
+	}
 
-	plain, err := a.aead.Open(nil, nonce, ciphertext, nil)
+	sealed := make([]byte, 0, len(decodedCipher)+len(decodedTag))
+	sealed = append(sealed, decodedCipher...)
+	sealed = append(sealed, decodedTag...)
+
+	plain, err := a.aead.Open(nil, decodedIV, sealed, nil)
 	if err != nil {
 		return "", fmt.Errorf("decrypt payload: %w", err)
 	}
 
 	return string(plain), nil
+}
+
+func (a *AesGCMEncryptor) ShouldEncrypt() bool {
+	return true
+}
+
+type NoopEncryptor struct{}
+
+func NewNoopEncryptor() *NoopEncryptor {
+	return &NoopEncryptor{}
+}
+
+func (n *NoopEncryptor) Encrypt(plain string) (string, string, string, error) {
+	return plain, "", "", nil
+}
+
+func (n *NoopEncryptor) Decrypt(cipher, iv, tag string) (string, error) {
+	return cipher, nil
+}
+
+func (n *NoopEncryptor) ShouldEncrypt() bool {
+	return false
 }

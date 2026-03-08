@@ -8,6 +8,7 @@ INSERT INTO usage_audit_logs (
     credential_type,
     credential_account_id,
     prompt_tokens,
+    cached_tokens,
     completion_tokens,
     total_tokens,
     input_price_micros,
@@ -23,7 +24,7 @@ INSERT INTO usage_audit_logs (
 )
 VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW()
+    $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW()
 )
 RETURNING *;
 
@@ -77,6 +78,7 @@ SELECT
     model,
     COUNT(*) as request_count,
     SUM(prompt_tokens) as total_prompt_tokens,
+    SUM(cached_tokens) as total_cached_tokens,
     SUM(completion_tokens) as total_completion_tokens,
     SUM(total_tokens) as total_tokens,
     SUM(total_price_micros) as total_price_micros,
@@ -96,6 +98,7 @@ SELECT
     credential_account_id,
     COUNT(*) as request_count,
     SUM(prompt_tokens) as total_prompt_tokens,
+    SUM(cached_tokens) as total_cached_tokens,
     SUM(completion_tokens) as total_completion_tokens,
     SUM(total_tokens) as total_tokens,
     SUM(total_price_micros) as total_price_micros,
@@ -140,6 +143,7 @@ ORDER BY day;
 SELECT
     COUNT(*) as total_requests,
     COALESCE(SUM(prompt_tokens), 0) as total_prompt_tokens,
+    COALESCE(SUM(cached_tokens), 0) as total_cached_tokens,
     COALESCE(SUM(completion_tokens), 0) as total_completion_tokens,
     COALESCE(SUM(total_tokens), 0) as total_tokens,
     COALESCE(SUM(total_price_micros), 0) as total_price_micros,

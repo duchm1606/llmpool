@@ -612,23 +612,52 @@ func (h *MessagesHandler) extractUsageFromSSEBuffer(data []byte, current *anthro
 	lines := bytes.Split(data, []byte("\n"))
 	for i := 0; i < len(lines)-1; i++ {
 		line := bytes.TrimSpace(lines[i])
-		if bytes.Equal(line, []byte("event: message_delta")) {
+		if bytes.Equal(line, []byte("event: message_delta")) || bytes.Equal(line, []byte("event: message_start")) {
 			// Next line should be data
 			if i+1 < len(lines) {
 				dataLine := bytes.TrimSpace(lines[i+1])
 				if bytes.HasPrefix(dataLine, []byte("data: ")) {
 					payload := bytes.TrimPrefix(dataLine, []byte("data: "))
-					var event struct {
-						Usage *struct {
-							InputTokens  int `json:"input_tokens"`
-							OutputTokens int `json:"output_tokens"`
-						} `json:"usage"`
-					}
-					if err := json.Unmarshal(payload, &event); err == nil && event.Usage != nil {
-						return &anthropic.Usage{
-							InputTokens:  event.Usage.InputTokens,
-							OutputTokens: event.Usage.OutputTokens,
+					var event map[string]any
+					if err := json.Unmarshal(payload, &event); err == nil {
+						usageMap, _ := event["usage"].(map[string]any)
+						if usageMap == nil {
+							if msgMap, ok := event["message"].(map[string]any); ok {
+								usageMap, _ = msgMap["usage"].(map[string]any)
+							}
 						}
+						if usageMap == nil {
+							continue
+						}
+
+						toInt := func(v any) int {
+							switch x := v.(type) {
+							case float64:
+								return int(x)
+							case int:
+								return x
+							default:
+								return 0
+							}
+						}
+
+						merged := &anthropic.Usage{}
+						if current != nil {
+							*merged = *current
+						}
+						if input := toInt(usageMap["input_tokens"]); input > 0 {
+							merged.InputTokens = input
+						}
+						if output := toInt(usageMap["output_tokens"]); output > 0 {
+							merged.OutputTokens = output
+						}
+						if cacheRead := toInt(usageMap["cache_read_input_tokens"]); cacheRead > 0 {
+							merged.CacheReadInputTokens = cacheRead
+						}
+						if cacheCreation := toInt(usageMap["cache_creation_input_tokens"]); cacheCreation > 0 {
+							merged.CacheCreationInputTokens = cacheCreation
+						}
+						return merged
 					}
 				}
 			}
@@ -812,9 +841,23 @@ func (h *MessagesHandler) convertResponsesAPIToAnthropic(respBody []byte, model 
 	if usageMap, ok := responseObj["usage"].(map[string]any); ok {
 		inputTokens, _ := usageMap["input_tokens"].(float64)
 		outputTokens, _ := usageMap["output_tokens"].(float64)
+		cacheReadTokens, _ := usageMap["cache_read_input_tokens"].(float64)
+		cacheCreationTokens, _ := usageMap["cache_creation_input_tokens"].(float64)
+		if cacheReadTokens == 0 {
+			if details, ok := usageMap["input_tokens_details"].(map[string]any); ok {
+				if cached, ok := details["cached_tokens"].(float64); ok {
+					cacheReadTokens = cached
+				}
+			}
+		}
+		if cacheReadTokens > 0 && inputTokens >= cacheReadTokens {
+			inputTokens -= cacheReadTokens
+		}
 		usage = &anthropic.Usage{
-			InputTokens:  int(inputTokens),
-			OutputTokens: int(outputTokens),
+			InputTokens:              int(inputTokens),
+			OutputTokens:             int(outputTokens),
+			CacheReadInputTokens:     int(cacheReadTokens),
+			CacheCreationInputTokens: int(cacheCreationTokens),
 		}
 	}
 
@@ -894,9 +937,15 @@ func (h *MessagesHandler) convertChatCompletionToAnthropic(respBody []byte, mode
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 		Usage *struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
+			PromptTokens        int `json:"prompt_tokens"`
+			CompletionTokens    int `json:"completion_tokens"`
+			TotalTokens         int `json:"total_tokens"`
+			PromptTokensDetails *struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"prompt_tokens_details,omitempty"`
+			InputTokensDetails *struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"input_tokens_details,omitempty"`
 		} `json:"usage"`
 	}
 
@@ -964,9 +1013,21 @@ func (h *MessagesHandler) convertChatCompletionToAnthropic(respBody []byte, mode
 	// Convert usage
 	var usage *anthropic.Usage
 	if chatResp.Usage != nil {
+		cacheReadTokens := 0
+		if chatResp.Usage.PromptTokensDetails != nil {
+			cacheReadTokens = chatResp.Usage.PromptTokensDetails.CachedTokens
+		}
+		if cacheReadTokens == 0 && chatResp.Usage.InputTokensDetails != nil {
+			cacheReadTokens = chatResp.Usage.InputTokensDetails.CachedTokens
+		}
+		inputTokens := chatResp.Usage.PromptTokens
+		if cacheReadTokens > 0 && inputTokens >= cacheReadTokens {
+			inputTokens -= cacheReadTokens
+		}
 		usage = &anthropic.Usage{
-			InputTokens:  chatResp.Usage.PromptTokens,
-			OutputTokens: chatResp.Usage.CompletionTokens,
+			InputTokens:          inputTokens,
+			OutputTokens:         chatResp.Usage.CompletionTokens,
+			CacheReadInputTokens: cacheReadTokens,
 		}
 	}
 
@@ -1007,10 +1068,11 @@ func (h *MessagesHandler) publishUsage(
 		return
 	}
 
-	var promptTokens, completionTokens int
+	var promptTokens, completionTokens, cachedTokens int
 	if usage != nil {
 		promptTokens = usage.InputTokens
 		completionTokens = usage.OutputTokens
+		cachedTokens = usage.CacheReadInputTokens + usage.CacheCreationInputTokens
 	}
 
 	var provider, credentialID, credentialType, credentialAccountID string
@@ -1029,6 +1091,7 @@ func (h *MessagesHandler) publishUsage(
 		CredentialType:      credentialType,
 		CredentialAccountID: credentialAccountID,
 		PromptTokens:        promptTokens,
+		CachedTokens:        cachedTokens,
 		CompletionTokens:    completionTokens,
 		Status:              status,
 		ErrorMessage:        errorMsg,

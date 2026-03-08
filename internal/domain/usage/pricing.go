@@ -5,8 +5,9 @@ package usage
 // Prices are in microdollars per token (1 microdollar = $0.000001).
 // For example: $15/1M tokens = 15 microdollars per token.
 type ModelPricing struct {
-	InputPriceMicros  int64 // Price per input token in microdollars
-	OutputPriceMicros int64 // Price per output token in microdollars
+	InputPriceMicros       int64 // Price per non-cached input token in microdollars
+	CachedInputPriceMicros int64 // Price per cached input token in microdollars
+	OutputPriceMicros      int64 // Price per output token in microdollars
 }
 
 // PricingConfig holds pricing for all supported models.
@@ -25,23 +26,65 @@ func DefaultPricingConfig() PricingConfig {
 	return PricingConfig{
 		Models: map[string]ModelPricing{
 			// Claude Opus 4.5: $15/1M input, $75/1M output
-			"claude-opus-4-5":           {InputPriceMicros: 15, OutputPriceMicros: 75},
-			"claude-opus-4.5":           {InputPriceMicros: 15, OutputPriceMicros: 75},
-			"claude-4.5-opus":           {InputPriceMicros: 15, OutputPriceMicros: 75},
-			"claude-4-5-opus":           {InputPriceMicros: 15, OutputPriceMicros: 75},
-			"anthropic/claude-opus-4.5": {InputPriceMicros: 15, OutputPriceMicros: 75},
+			// Cached tokens use a discounted price tier.
+			"claude-opus-4-5": {
+				InputPriceMicros:       15,
+				CachedInputPriceMicros: 2,
+				OutputPriceMicros:      75,
+			},
+			"claude-opus-4.5": {
+				InputPriceMicros:       15,
+				CachedInputPriceMicros: 2,
+				OutputPriceMicros:      75,
+			},
+			"claude-4.5-opus": {
+				InputPriceMicros:       15,
+				CachedInputPriceMicros: 2,
+				OutputPriceMicros:      75,
+			},
+			"claude-4-5-opus": {
+				InputPriceMicros:       15,
+				CachedInputPriceMicros: 2,
+				OutputPriceMicros:      75,
+			},
+			"anthropic/claude-opus-4.5": {
+				InputPriceMicros:       15,
+				CachedInputPriceMicros: 2,
+				OutputPriceMicros:      75,
+			},
 
 			// Claude Opus 4.6: $15/1M input, $75/1M output (assumed)
-			"claude-opus-4-6":           {InputPriceMicros: 15, OutputPriceMicros: 75},
-			"claude-opus-4.6":           {InputPriceMicros: 15, OutputPriceMicros: 75},
-			"claude-4.6-opus":           {InputPriceMicros: 15, OutputPriceMicros: 75},
-			"claude-4-6-opus":           {InputPriceMicros: 15, OutputPriceMicros: 75},
-			"anthropic/claude-opus-4.6": {InputPriceMicros: 15, OutputPriceMicros: 75},
+			"claude-opus-4-6": {
+				InputPriceMicros:       15,
+				CachedInputPriceMicros: 2,
+				OutputPriceMicros:      75,
+			},
+			"claude-opus-4.6": {
+				InputPriceMicros:       15,
+				CachedInputPriceMicros: 2,
+				OutputPriceMicros:      75,
+			},
+			"claude-4.6-opus": {
+				InputPriceMicros:       15,
+				CachedInputPriceMicros: 2,
+				OutputPriceMicros:      75,
+			},
+			"claude-4-6-opus": {
+				InputPriceMicros:       15,
+				CachedInputPriceMicros: 2,
+				OutputPriceMicros:      75,
+			},
+			"anthropic/claude-opus-4.6": {
+				InputPriceMicros:       15,
+				CachedInputPriceMicros: 2,
+				OutputPriceMicros:      75,
+			},
 		},
 		// Fallback pricing for unknown models (intentionally zero)
 		Fallback: ModelPricing{
-			InputPriceMicros:  0,
-			OutputPriceMicros: 0,
+			InputPriceMicros:       0,
+			CachedInputPriceMicros: 0,
+			OutputPriceMicros:      0,
 		},
 	}
 }
@@ -57,10 +100,11 @@ func (c *PricingConfig) GetPricing(model string) ModelPricing {
 
 // CalculatePrice calculates the price for token usage.
 // Returns the total price in microdollars.
-func (c *PricingConfig) CalculatePrice(model string, promptTokens, completionTokens int) (inputMicros, outputMicros, totalMicros int64) {
+func (c *PricingConfig) CalculatePrice(model string, promptTokens, cachedTokens, completionTokens int) (inputMicros, cachedMicros, outputMicros, totalMicros int64) {
 	pricing := c.GetPricing(model)
 	inputMicros = int64(promptTokens) * pricing.InputPriceMicros
+	cachedMicros = int64(cachedTokens) * pricing.CachedInputPriceMicros
 	outputMicros = int64(completionTokens) * pricing.OutputPriceMicros
-	totalMicros = inputMicros + outputMicros
+	totalMicros = inputMicros + cachedMicros + outputMicros
 	return
 }

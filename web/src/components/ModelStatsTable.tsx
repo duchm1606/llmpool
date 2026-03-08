@@ -60,7 +60,9 @@ export function ModelStatsTable({ data }: ModelStatsTableProps) {
                 { key: 'provider', label: 'Provider' },
                 { key: 'requests', label: 'Requests' },
                 { key: 'tokens_in', label: 'Tokens In' },
+                { key: 'cached_tokens', label: 'Cached' },
                 { key: 'tokens_out', label: 'Tokens Out' },
+                { key: 'total_tokens', label: 'Total Tokens' },
                 { key: 'cost', label: 'Cost' },
                 { key: 'avg_latency_ms', label: 'Avg Latency' },
                 { key: 'error_count', label: 'Errors' },
@@ -103,8 +105,14 @@ export function ModelStatsTable({ data }: ModelStatsTableProps) {
                 <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                   {formatNumber(model.tokens_in)}
                 </td>
+                <td className="px-4 py-3 whitespace-nowrap text-sm text-amber-700">
+                  {formatNumber(model.cached_tokens)}
+                </td>
                 <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                   {formatNumber(model.tokens_out)}
+                </td>
+                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                  {formatNumber(model.total_tokens)}
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                   {formatCurrency(model.cost)}

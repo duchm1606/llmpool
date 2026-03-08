@@ -26,8 +26,9 @@ type CredentialRepository interface {
 
 // Encryptor defines the contract for encrypting sensitive data
 type Encryptor interface {
-	Encrypt(plain string) (string, error)
-	Decrypt(cipher string) (string, error)
+	Encrypt(plain string) (ciphertext, iv, tag string, err error)
+	Decrypt(cipher, iv, tag string) (string, error)
+	ShouldEncrypt() bool
 }
 
 // NewCompletionService creates a new CompletionService
@@ -64,7 +65,7 @@ func (s *CompletionService) HandleCompletion(ctx context.Context, sessionID stri
 	}
 
 	// 2. Encrypt the profile
-	encryptedProfile, err := s.encryptor.Encrypt(string(profileJSON))
+	encryptedProfile, iv, tag, err := s.encryptor.Encrypt(string(profileJSON))
 	if err != nil {
 		return fmt.Errorf("encrypt profile json: %w", err)
 	}
@@ -79,6 +80,8 @@ func (s *CompletionService) HandleCompletion(ctx context.Context, sessionID stri
 		Expired:          tokenPayload.ExpiresAt,
 		LastRefreshAt:    s.now(),
 		EncryptedProfile: encryptedProfile,
+		EncryptedIV:      stringPtrOrNil(iv),
+		EncryptedTag:     stringPtrOrNil(tag),
 	}
 
 	// 4. Upsert to database using credentialRepo.UpsertByTypeAccount
@@ -88,4 +91,12 @@ func (s *CompletionService) HandleCompletion(ctx context.Context, sessionID stri
 	}
 
 	return nil
+}
+
+func stringPtrOrNil(value string) *string {
+	if value == "" {
+		return nil
+	}
+	v := value
+	return &v
 }

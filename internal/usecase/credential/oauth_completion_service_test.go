@@ -27,6 +27,11 @@ func (m *mockRepository) List(ctx context.Context) ([]domaincredential.Profile, 
 	return args.Get(0).([]domaincredential.Profile), args.Error(1)
 }
 
+func (m *mockRepository) GetByID(ctx context.Context, id string) (*domaincredential.Profile, error) {
+	_ = id
+	return nil, nil
+}
+
 func (m *mockRepository) Update(ctx context.Context, profile domaincredential.Profile) (domaincredential.Profile, error) {
 	args := m.Called(ctx, profile)
 	return args.Get(0).(domaincredential.Profile), args.Error(1)
@@ -56,20 +61,24 @@ type mockEncryptor struct {
 	mock.Mock
 }
 
-func (m *mockEncryptor) Encrypt(plain string) (string, error) {
+func (m *mockEncryptor) Encrypt(plain string) (string, string, string, error) {
 	args := m.Called(plain)
+	return args.String(0), args.String(1), args.String(2), args.Error(3)
+}
+
+func (m *mockEncryptor) Decrypt(cipher, iv, tag string) (string, error) {
+	args := m.Called(cipher, iv, tag)
 	return args.String(0), args.Error(1)
 }
 
-func (m *mockEncryptor) Decrypt(cipher string) (string, error) {
-	args := m.Called(cipher)
-	return args.String(0), args.Error(1)
+func (m *mockEncryptor) ShouldEncrypt() bool {
+	return true
 }
 
 func TestOAuthCompletionService_CompleteOAuth_Success(t *testing.T) {
 	mockRepo := new(mockRepository)
 	mockEnc := new(mockEncryptor)
-	service := NewOAuthCompletionService(mockRepo, mockEnc)
+	service := NewOAuthCompletionService(mockRepo, mockEnc, nil)
 
 	// Override the time function for deterministic testing
 	svc := service.(*oAuthCompletionService)
@@ -86,7 +95,7 @@ func TestOAuthCompletionService_CompleteOAuth_Success(t *testing.T) {
 	}
 
 	expectedEncrypted := "encrypted-profile-data"
-	mockEnc.On("Encrypt", mock.Anything).Return(expectedEncrypted, nil)
+	mockEnc.On("Encrypt", mock.Anything).Return(expectedEncrypted, "iv", "tag", nil)
 
 	expectedProfile := domaincredential.Profile{
 		ID:               "profile-id",
@@ -117,14 +126,14 @@ func TestOAuthCompletionService_CompleteOAuth_Success(t *testing.T) {
 func TestOAuthCompletionService_CompleteOAuth_EncryptError(t *testing.T) {
 	mockRepo := new(mockRepository)
 	mockEnc := new(mockEncryptor)
-	service := NewOAuthCompletionService(mockRepo, mockEnc)
+	service := NewOAuthCompletionService(mockRepo, mockEnc, nil)
 
 	accountID := "user@example.com"
 	tokenPayload := domainoauth.TokenPayload{
 		AccessToken: "access-token-123",
 	}
 
-	mockEnc.On("Encrypt", mock.Anything).Return("", errors.New("encryption failed"))
+	mockEnc.On("Encrypt", mock.Anything).Return("", "", "", errors.New("encryption failed"))
 
 	_, err := service.CompleteOAuth(context.Background(), accountID, tokenPayload)
 
@@ -137,14 +146,14 @@ func TestOAuthCompletionService_CompleteOAuth_EncryptError(t *testing.T) {
 func TestOAuthCompletionService_CompleteOAuth_UpsertError(t *testing.T) {
 	mockRepo := new(mockRepository)
 	mockEnc := new(mockEncryptor)
-	service := NewOAuthCompletionService(mockRepo, mockEnc)
+	service := NewOAuthCompletionService(mockRepo, mockEnc, nil)
 
 	accountID := "user@example.com"
 	tokenPayload := domainoauth.TokenPayload{
 		AccessToken: "access-token-123",
 	}
 
-	mockEnc.On("Encrypt", mock.Anything).Return("encrypted", nil)
+	mockEnc.On("Encrypt", mock.Anything).Return("encrypted", "iv", "tag", nil)
 	mockRepo.On("UpsertByTypeAccount", mock.Anything, mock.Anything).Return(domaincredential.Profile{}, errors.New("upsert failed"))
 
 	_, err := service.CompleteOAuth(context.Background(), accountID, tokenPayload)
@@ -158,7 +167,7 @@ func TestOAuthCompletionService_CompleteOAuth_UpsertError(t *testing.T) {
 func TestOAuthCompletionService_CompleteOAuth_ReauthIdempotency(t *testing.T) {
 	mockRepo := new(mockRepository)
 	mockEnc := new(mockEncryptor)
-	service := NewOAuthCompletionService(mockRepo, mockEnc)
+	service := NewOAuthCompletionService(mockRepo, mockEnc, nil)
 
 	svc := service.(*oAuthCompletionService)
 	fixedTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -173,7 +182,7 @@ func TestOAuthCompletionService_CompleteOAuth_ReauthIdempotency(t *testing.T) {
 		ExpiresAt:    time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC),
 	}
 
-	mockEnc.On("Encrypt", mock.Anything).Return("encrypted-1", nil).Once()
+	mockEnc.On("Encrypt", mock.Anything).Return("encrypted-1", "iv1", "tag1", nil).Once()
 	mockRepo.On("UpsertByTypeAccount", mock.Anything, mock.MatchedBy(func(p domaincredential.Profile) bool {
 		return p.AccountID == accountID && p.EncryptedProfile == "encrypted-1"
 	})).Return(domaincredential.Profile{ID: "profile-1"}, nil).Once()
@@ -188,7 +197,7 @@ func TestOAuthCompletionService_CompleteOAuth_ReauthIdempotency(t *testing.T) {
 		ExpiresAt:    time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC),
 	}
 
-	mockEnc.On("Encrypt", mock.Anything).Return("encrypted-2", nil).Once()
+	mockEnc.On("Encrypt", mock.Anything).Return("encrypted-2", "iv2", "tag2", nil).Once()
 	mockRepo.On("UpsertByTypeAccount", mock.Anything, mock.MatchedBy(func(p domaincredential.Profile) bool {
 		return p.AccountID == accountID && p.EncryptedProfile == "encrypted-2"
 	})).Return(domaincredential.Profile{ID: "profile-1"}, nil).Once()
@@ -203,7 +212,7 @@ func TestOAuthCompletionService_CompleteOAuth_ReauthIdempotency(t *testing.T) {
 func TestOAuthCompletionService_CompleteOAuth_EmptyAccountID(t *testing.T) {
 	mockRepo := new(mockRepository)
 	mockEnc := new(mockEncryptor)
-	service := NewOAuthCompletionService(mockRepo, mockEnc)
+	service := NewOAuthCompletionService(mockRepo, mockEnc, nil)
 
 	tokenPayload := domainoauth.TokenPayload{
 		AccessToken:  "access-token",
@@ -223,7 +232,7 @@ func TestOAuthCompletionService_CompleteOAuth_EmptyAccountID(t *testing.T) {
 func TestOAuthCompletionService_CompleteOAuth_WhitespaceAccountID(t *testing.T) {
 	mockRepo := new(mockRepository)
 	mockEnc := new(mockEncryptor)
-	service := NewOAuthCompletionService(mockRepo, mockEnc)
+	service := NewOAuthCompletionService(mockRepo, mockEnc, nil)
 
 	tokenPayload := domainoauth.TokenPayload{
 		AccessToken:  "access-token",
@@ -243,7 +252,7 @@ func TestOAuthCompletionService_CompleteOAuth_WhitespaceAccountID(t *testing.T) 
 func TestOAuthCompletionService_CompleteOAuth_GeneratesUUID(t *testing.T) {
 	mockRepo := new(mockRepository)
 	mockEnc := new(mockEncryptor)
-	service := NewOAuthCompletionService(mockRepo, mockEnc)
+	service := NewOAuthCompletionService(mockRepo, mockEnc, nil)
 
 	tokenPayload := domainoauth.TokenPayload{
 		AccessToken:  "access-token",
@@ -251,7 +260,7 @@ func TestOAuthCompletionService_CompleteOAuth_GeneratesUUID(t *testing.T) {
 		ExpiresAt:    time.Now().Add(time.Hour),
 	}
 
-	mockEnc.On("Encrypt", mock.Anything).Return("encrypted", nil)
+	mockEnc.On("Encrypt", mock.Anything).Return("encrypted", "iv", "tag", nil)
 
 	var capturedID string
 	mockRepo.On("UpsertByTypeAccount", mock.Anything, mock.MatchedBy(func(p domaincredential.Profile) bool {
@@ -265,6 +274,41 @@ func TestOAuthCompletionService_CompleteOAuth_GeneratesUUID(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEmpty(t, capturedID)
 	assert.Len(t, capturedID, 36) // UUID format
+	mockEnc.AssertExpectations(t)
+	mockRepo.AssertExpectations(t)
+}
+
+func TestOAuthCompletionService_CompleteOAuth_RefreshesRegistryOnSuccess(t *testing.T) {
+	mockRepo := new(mockRepository)
+	mockEnc := new(mockEncryptor)
+
+	var refreshCalled bool
+	var refreshedType string
+	var refreshedAccountID string
+	service := NewOAuthCompletionService(mockRepo, mockEnc, func(_ context.Context, profileType, accountID string) {
+		refreshCalled = true
+		refreshedType = profileType
+		refreshedAccountID = accountID
+	})
+
+	tokenPayload := domainoauth.TokenPayload{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		ExpiresAt:    time.Now().Add(time.Hour),
+	}
+
+	mockEnc.On("Encrypt", mock.Anything).Return("encrypted", "iv", "tag", nil)
+	mockRepo.On("UpsertByTypeAccount", mock.Anything, mock.Anything).Return(domaincredential.Profile{
+		Type:      "codex",
+		AccountID: "testuser",
+	}, nil)
+
+	_, err := service.CompleteOAuth(context.Background(), "testuser", tokenPayload)
+
+	assert.NoError(t, err)
+	assert.True(t, refreshCalled)
+	assert.Equal(t, "codex", refreshedType)
+	assert.Equal(t, "testuser", refreshedAccountID)
 	mockEnc.AssertExpectations(t)
 	mockRepo.AssertExpectations(t)
 }

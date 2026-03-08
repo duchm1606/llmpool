@@ -515,7 +515,7 @@ func (s *service) publishUsage(
 	// Determine status and extract token usage
 	var status domainusage.Status
 	var errMsg string
-	var promptTokens, completionTokens int
+	var promptTokens, completionTokens, cachedTokens int
 
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -526,7 +526,13 @@ func (s *service) publishUsage(
 		errMsg = err.Error()
 	} else if resp != nil && resp.Usage != nil {
 		status = domainusage.StatusDone
+		cachedTokens = resp.Usage.CachedTokens()
 		promptTokens = resp.Usage.PromptTokens
+		// OpenAI-compatible APIs typically report prompt_tokens including cached tokens.
+		// Normalize to non-cached input tokens when possible.
+		if cachedTokens > 0 && promptTokens >= cachedTokens {
+			promptTokens -= cachedTokens
+		}
 		completionTokens = resp.Usage.CompletionTokens
 	} else {
 		status = domainusage.StatusDone
@@ -551,6 +557,7 @@ func (s *service) publishUsage(
 		CredentialType:      credentialType,
 		CredentialAccountID: credentialAccountID,
 		PromptTokens:        promptTokens,
+		CachedTokens:        cachedTokens,
 		CompletionTokens:    completionTokens,
 		Status:              status,
 		ErrorMessage:        errMsg,

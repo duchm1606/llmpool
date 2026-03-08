@@ -35,6 +35,10 @@ func (m *mockCredentialRepository) List(ctx context.Context) ([]domaincredential
 	return nil, nil
 }
 
+func (m *mockCredentialRepository) GetByID(ctx context.Context, id string) (*domaincredential.Profile, error) {
+	return nil, nil
+}
+
 func (m *mockCredentialRepository) Update(ctx context.Context, profile domaincredential.Profile) (domaincredential.Profile, error) {
 	return domaincredential.Profile{}, nil
 }
@@ -63,16 +67,16 @@ func newMockEncryptor() *mockEncryptor {
 	}
 }
 
-func (m *mockEncryptor) Encrypt(plain string) (string, error) {
+func (m *mockEncryptor) Encrypt(plain string) (string, string, string, error) {
 	if m.err != nil {
-		return "", m.err
+		return "", "", "", m.err
 	}
 	cipher := "encrypted_" + plain
 	m.encrypted[plain] = cipher
-	return cipher, nil
+	return cipher, "iv", "tag", nil
 }
 
-func (m *mockEncryptor) Decrypt(cipher string) (string, error) {
+func (m *mockEncryptor) Decrypt(cipher, iv, tag string) (string, error) {
 	if m.err != nil {
 		return "", m.err
 	}
@@ -82,6 +86,10 @@ func (m *mockEncryptor) Decrypt(cipher string) (string, error) {
 		}
 	}
 	return "", errors.New("cipher not found")
+}
+
+func (m *mockEncryptor) ShouldEncrypt() bool {
+	return true
 }
 
 func TestCompletionService_HandleCompletion(t *testing.T) {
@@ -117,7 +125,11 @@ func TestCompletionService_HandleCompletion(t *testing.T) {
 		assert.Equal(t, fixedNow, profile.LastRefreshAt)
 
 		// Verify encrypted profile contains expected data
-		decrypted, err := encryptor.Decrypt(profile.EncryptedProfile)
+		decrypted, err := encryptor.Decrypt(
+			profile.EncryptedProfile,
+			stringValue(profile.EncryptedIV),
+			stringValue(profile.EncryptedTag),
+		)
 		require.NoError(t, err)
 
 		var profileData map[string]interface{}
@@ -194,4 +206,11 @@ func TestCompletionService_HandleCompletion(t *testing.T) {
 		assert.Contains(t, err.Error(), "upsert credential profile")
 	})
 
+}
+
+func stringValue(ptr *string) string {
+	if ptr == nil {
+		return ""
+	}
+	return *ptr
 }

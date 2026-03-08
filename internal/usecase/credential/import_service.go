@@ -12,13 +12,19 @@ import (
 )
 
 type importService struct {
-	repo      Repository
-	encryptor Encryptor
-	now       func() time.Time
+	repo              Repository
+	encryptor         Encryptor
+	now               func() time.Time
+	registryRefresher RegistryRefresher
 }
 
-func NewImportService(repo Repository, encryptor Encryptor) ImportService {
-	return &importService{repo: repo, encryptor: encryptor, now: time.Now}
+func NewImportService(repo Repository, encryptor Encryptor, registryRefresher RegistryRefresher) ImportService {
+	return &importService{
+		repo:              repo,
+		encryptor:         encryptor,
+		now:               time.Now,
+		registryRefresher: registryRefresher,
+	}
 }
 
 func (s *importService) Import(ctx context.Context, profileInput CredentialProfile) (domaincredential.Profile, error) {
@@ -36,7 +42,7 @@ func (s *importService) Import(ctx context.Context, profileInput CredentialProfi
 		return domaincredential.Profile{}, fmt.Errorf("marshal credential profile: %w", err)
 	}
 
-	encProfile, err := s.encryptor.Encrypt(string(rawProfile))
+	encProfile, iv, tag, err := s.encryptor.Encrypt(string(rawProfile))
 	if err != nil {
 		return domaincredential.Profile{}, fmt.Errorf("encrypt profile json: %w", err)
 	}
@@ -55,7 +61,18 @@ func (s *importService) Import(ctx context.Context, profileInput CredentialProfi
 		Expired:          profileInput.Expired,
 		LastRefreshAt:    profileInput.LastRefresh,
 		EncryptedProfile: encProfile,
+		EncryptedIV:      stringPtrOrNil(iv),
+		EncryptedTag:     stringPtrOrNil(tag),
 	}
 
-	return s.repo.UpsertByTypeAccount(ctx, profile)
+	savedProfile, err := s.repo.UpsertByTypeAccount(ctx, profile)
+	if err != nil {
+		return domaincredential.Profile{}, err
+	}
+
+	if s.registryRefresher != nil {
+		s.registryRefresher(ctx, savedProfile.Type, savedProfile.AccountID)
+	}
+
+	return savedProfile, nil
 }

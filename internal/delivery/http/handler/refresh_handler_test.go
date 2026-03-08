@@ -175,3 +175,28 @@ func TestRefreshHandler_Refresh_CredentialID_Error(t *testing.T) {
 		t.Fatalf("quota check should not run on refresh error, got %q", quotaSvc.lastCredential)
 	}
 }
+
+func TestRefreshHandler_Refresh_CredentialID_QuotaFailureStillReturnsOK(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	refreshSvc := &refreshServiceStub{}
+	quotaSvc := &quotaServiceStub{err: errors.New("quota failure")}
+	h := NewRefreshHandler(refreshSvc, quotaSvc)
+	r := gin.New()
+	r.POST("/v1/internal/auth-profiles/refresh", h.Refresh)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/internal/auth-profiles/refresh?credential_id=cred-1", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if refreshSvc.lastCredentialID != "cred-1" {
+		t.Fatalf("refresh credential_id = %q, want cred-1", refreshSvc.lastCredentialID)
+	}
+	if quotaSvc.lastCredential != "cred-1" {
+		t.Fatalf("quota credential_id = %q, want cred-1", quotaSvc.lastCredential)
+	}
+}

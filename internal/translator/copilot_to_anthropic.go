@@ -74,8 +74,10 @@ func NewCopilotToAnthropicStreamState(model string) *CopilotToAnthropicStreamSta
 // GetUsage returns the token usage tracked during streaming.
 func (s *CopilotToAnthropicStreamState) GetUsage() *anthropic.Usage {
 	return &anthropic.Usage{
-		InputTokens:  s.InputTokens,
-		OutputTokens: s.OutputTokens,
+		InputTokens:              s.InputTokens,
+		OutputTokens:             s.OutputTokens,
+		CacheReadInputTokens:     s.CacheReadInputTokens,
+		CacheCreationInputTokens: s.CacheCreationInputTokens,
 	}
 }
 
@@ -308,6 +310,9 @@ func (s *CopilotToAnthropicStreamState) ConvertCopilotEventToAnthropic(eventData
 				}
 				if v, ok := usage["cache_creation_input_tokens"].(float64); ok {
 					s.CacheCreationInputTokens = int(v)
+				}
+				if s.CacheReadInputTokens > 0 && s.InputTokens >= s.CacheReadInputTokens {
+					s.InputTokens -= s.CacheReadInputTokens
 				}
 			}
 			// Extract stop reason
@@ -619,6 +624,9 @@ func (s *CopilotToAnthropicStreamState) ConvertChatCompletionEventToAnthropic(ev
 		// Extract cached tokens if available
 		if chunk.Usage.PromptTokensDetails != nil {
 			s.CacheReadInputTokens = chunk.Usage.PromptTokensDetails.CachedTokens
+			if s.CacheReadInputTokens > 0 && s.InputTokens >= s.CacheReadInputTokens {
+				s.InputTokens -= s.CacheReadInputTokens
+			}
 		}
 	}
 

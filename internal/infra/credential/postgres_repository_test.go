@@ -7,6 +7,7 @@ import (
 
 	domaincredential "github.com/duchoang/llmpool/internal/domain/credential"
 	"github.com/duchoang/llmpool/internal/infra/credential/sqlcdb"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,48 +15,56 @@ import (
 
 // MockQuerier implements sqlcdb.Querier for testing
 type MockQuerier struct {
-	createFn       func(ctx context.Context, arg sqlcdb.CreateCredentialProfileParams) (sqlcdb.CredentialProfile, error)
-	listFn         func(ctx context.Context) ([]sqlcdb.CredentialProfile, error)
-	updateFn       func(ctx context.Context, arg sqlcdb.UpdateCredentialProfileParams) (sqlcdb.CredentialProfile, error)
-	upsertFn       func(ctx context.Context, arg sqlcdb.UpsertCredentialProfileByTypeAccountParams) (sqlcdb.CredentialProfile, error)
-	listEnabledFn  func(ctx context.Context) ([]sqlcdb.CredentialProfile, error)
+	createFn       func(ctx context.Context, arg sqlcdb.CreateCredentialProfileParams) (sqlcdb.CreateCredentialProfileRow, error)
+	listFn         func(ctx context.Context) ([]sqlcdb.ListCredentialProfilesRow, error)
+	getByIDFn      func(ctx context.Context, id string) (sqlcdb.GetCredentialProfileByIDRow, error)
+	updateFn       func(ctx context.Context, arg sqlcdb.UpdateCredentialProfileParams) (sqlcdb.UpdateCredentialProfileRow, error)
+	upsertFn       func(ctx context.Context, arg sqlcdb.UpsertCredentialProfileByTypeAccountParams) (sqlcdb.UpsertCredentialProfileByTypeAccountRow, error)
+	listEnabledFn  func(ctx context.Context) ([]sqlcdb.ListEnabledCredentialProfilesRow, error)
 	countEnabledFn func(ctx context.Context) (int64, error)
-	randomSampleFn func(ctx context.Context, arg sqlcdb.RandomSampleEnabledCredentialProfilesParams) ([]sqlcdb.CredentialProfile, error)
+	randomSampleFn func(ctx context.Context, arg sqlcdb.RandomSampleEnabledCredentialProfilesParams) ([]sqlcdb.RandomSampleEnabledCredentialProfilesRow, error)
 }
 
-func (m *MockQuerier) CreateCredentialProfile(ctx context.Context, arg sqlcdb.CreateCredentialProfileParams) (sqlcdb.CredentialProfile, error) {
+func (m *MockQuerier) CreateCredentialProfile(ctx context.Context, arg sqlcdb.CreateCredentialProfileParams) (sqlcdb.CreateCredentialProfileRow, error) {
 	if m.createFn != nil {
 		return m.createFn(ctx, arg)
 	}
-	return sqlcdb.CredentialProfile{}, nil
+	return sqlcdb.CreateCredentialProfileRow{}, nil
 }
 
-func (m *MockQuerier) ListCredentialProfiles(ctx context.Context) ([]sqlcdb.CredentialProfile, error) {
+func (m *MockQuerier) ListCredentialProfiles(ctx context.Context) ([]sqlcdb.ListCredentialProfilesRow, error) {
 	if m.listFn != nil {
 		return m.listFn(ctx)
 	}
 	return nil, nil
 }
 
-func (m *MockQuerier) UpdateCredentialProfile(ctx context.Context, arg sqlcdb.UpdateCredentialProfileParams) (sqlcdb.CredentialProfile, error) {
+func (m *MockQuerier) GetCredentialProfileByID(ctx context.Context, id string) (sqlcdb.GetCredentialProfileByIDRow, error) {
+	if m.getByIDFn != nil {
+		return m.getByIDFn(ctx, id)
+	}
+	return sqlcdb.GetCredentialProfileByIDRow{}, pgx.ErrNoRows
+}
+
+func (m *MockQuerier) UpdateCredentialProfile(ctx context.Context, arg sqlcdb.UpdateCredentialProfileParams) (sqlcdb.UpdateCredentialProfileRow, error) {
 	if m.updateFn != nil {
 		return m.updateFn(ctx, arg)
 	}
-	return sqlcdb.CredentialProfile{}, nil
+	return sqlcdb.UpdateCredentialProfileRow{}, nil
 }
 
-func (m *MockQuerier) UpsertCredentialProfileByTypeAccount(ctx context.Context, arg sqlcdb.UpsertCredentialProfileByTypeAccountParams) (sqlcdb.CredentialProfile, error) {
+func (m *MockQuerier) UpsertCredentialProfileByTypeAccount(ctx context.Context, arg sqlcdb.UpsertCredentialProfileByTypeAccountParams) (sqlcdb.UpsertCredentialProfileByTypeAccountRow, error) {
 	if m.upsertFn != nil {
 		return m.upsertFn(ctx, arg)
 	}
-	return sqlcdb.CredentialProfile{}, nil
+	return sqlcdb.UpsertCredentialProfileByTypeAccountRow{}, nil
 }
 
-func (m *MockQuerier) ListEnabledCredentialProfiles(ctx context.Context) ([]sqlcdb.CredentialProfile, error) {
+func (m *MockQuerier) ListEnabledCredentialProfiles(ctx context.Context) ([]sqlcdb.ListEnabledCredentialProfilesRow, error) {
 	if m.listEnabledFn != nil {
 		return m.listEnabledFn(ctx)
 	}
-	return []sqlcdb.CredentialProfile{}, nil
+	return []sqlcdb.ListEnabledCredentialProfilesRow{}, nil
 }
 
 func (m *MockQuerier) CountEnabledCredentialProfiles(ctx context.Context) (int64, error) {
@@ -65,18 +74,18 @@ func (m *MockQuerier) CountEnabledCredentialProfiles(ctx context.Context) (int64
 	return 0, nil
 }
 
-func (m *MockQuerier) RandomSampleEnabledCredentialProfiles(ctx context.Context, arg sqlcdb.RandomSampleEnabledCredentialProfilesParams) ([]sqlcdb.CredentialProfile, error) {
+func (m *MockQuerier) RandomSampleEnabledCredentialProfiles(ctx context.Context, arg sqlcdb.RandomSampleEnabledCredentialProfilesParams) ([]sqlcdb.RandomSampleEnabledCredentialProfilesRow, error) {
 	if m.randomSampleFn != nil {
 		return m.randomSampleFn(ctx, arg)
 	}
-	return []sqlcdb.CredentialProfile{}, nil
+	return []sqlcdb.RandomSampleEnabledCredentialProfilesRow{}, nil
 }
 
 func TestUpsertByTypeAccount(t *testing.T) {
 	tests := []struct {
 		name           string
 		input          domaincredential.Profile
-		mockResponse   sqlcdb.CredentialProfile
+		mockResponse   sqlcdb.UpsertCredentialProfileByTypeAccountRow
 		expectedOutput domaincredential.Profile
 		expectError    bool
 	}{
@@ -92,7 +101,7 @@ func TestUpsertByTypeAccount(t *testing.T) {
 				LastRefreshAt:    time.Date(2025, 3, 2, 0, 0, 0, 0, time.UTC),
 				EncryptedProfile: "encrypted_data_here",
 			},
-			mockResponse: sqlcdb.CredentialProfile{
+			mockResponse: sqlcdb.UpsertCredentialProfileByTypeAccountRow{
 				ID:               "profile-456",
 				Type:             "oauth",
 				AccountID:        "account-123",
@@ -121,7 +130,7 @@ func TestUpsertByTypeAccount(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mock := &MockQuerier{
-				upsertFn: func(ctx context.Context, arg sqlcdb.UpsertCredentialProfileByTypeAccountParams) (sqlcdb.CredentialProfile, error) {
+				upsertFn: func(ctx context.Context, arg sqlcdb.UpsertCredentialProfileByTypeAccountParams) (sqlcdb.UpsertCredentialProfileByTypeAccountRow, error) {
 					// Verify input parameters
 					assert.Equal(t, tt.input.ID, arg.ID)
 					assert.Equal(t, tt.input.Type, arg.Type)
@@ -161,14 +170,14 @@ func TestUpsertByTypeAccountIdempotency(t *testing.T) {
 		expectedID := "profile-789"
 
 		mock := &MockQuerier{
-			upsertFn: func(ctx context.Context, arg sqlcdb.UpsertCredentialProfileByTypeAccountParams) (sqlcdb.CredentialProfile, error) {
+			upsertFn: func(ctx context.Context, arg sqlcdb.UpsertCredentialProfileByTypeAccountParams) (sqlcdb.UpsertCredentialProfileByTypeAccountRow, error) {
 				callCount++
 				// Both calls should use same type and account_id
 				assert.Equal(t, "oauth", arg.Type)
 				assert.Equal(t, "account-999", arg.AccountID)
 
 				// Return same ID to simulate idempotent behavior
-				return sqlcdb.CredentialProfile{
+				return sqlcdb.UpsertCredentialProfileByTypeAccountRow{
 					ID:               expectedID,
 					Type:             arg.Type,
 					AccountID:        arg.AccountID,
@@ -236,9 +245,9 @@ func TestUpsertByTypeAccountParameterMapping(t *testing.T) {
 
 		var capturedParams sqlcdb.UpsertCredentialProfileByTypeAccountParams
 		mock := &MockQuerier{
-			upsertFn: func(ctx context.Context, arg sqlcdb.UpsertCredentialProfileByTypeAccountParams) (sqlcdb.CredentialProfile, error) {
+			upsertFn: func(ctx context.Context, arg sqlcdb.UpsertCredentialProfileByTypeAccountParams) (sqlcdb.UpsertCredentialProfileByTypeAccountRow, error) {
 				capturedParams = arg
-				return sqlcdb.CredentialProfile{
+				return sqlcdb.UpsertCredentialProfileByTypeAccountRow{
 					ID:               "test-id",
 					Type:             arg.Type,
 					AccountID:        arg.AccountID,
@@ -273,7 +282,7 @@ func TestUpsertByTypeAccountParameterMapping(t *testing.T) {
 func TestListEnabled(t *testing.T) {
 	t.Run("returns enabled profiles only", func(t *testing.T) {
 		now := time.Now()
-		mockProfiles := []sqlcdb.CredentialProfile{
+		mockProfiles := []sqlcdb.ListEnabledCredentialProfilesRow{
 			{
 				ID:               "profile-1",
 				Type:             "codex",
@@ -301,7 +310,7 @@ func TestListEnabled(t *testing.T) {
 		}
 
 		mock := &MockQuerier{
-			listEnabledFn: func(ctx context.Context) ([]sqlcdb.CredentialProfile, error) {
+			listEnabledFn: func(ctx context.Context) ([]sqlcdb.ListEnabledCredentialProfilesRow, error) {
 				return mockProfiles, nil
 			},
 		}
@@ -319,8 +328,8 @@ func TestListEnabled(t *testing.T) {
 
 	t.Run("returns empty slice when no enabled profiles", func(t *testing.T) {
 		mock := &MockQuerier{
-			listEnabledFn: func(ctx context.Context) ([]sqlcdb.CredentialProfile, error) {
-				return []sqlcdb.CredentialProfile{}, nil
+			listEnabledFn: func(ctx context.Context) ([]sqlcdb.ListEnabledCredentialProfilesRow, error) {
+				return []sqlcdb.ListEnabledCredentialProfilesRow{}, nil
 			},
 		}
 
@@ -365,7 +374,7 @@ func TestCountEnabled(t *testing.T) {
 func TestRandomSample(t *testing.T) {
 	t.Run("returns sampled profiles with correct params", func(t *testing.T) {
 		now := time.Now()
-		mockProfiles := []sqlcdb.CredentialProfile{
+		mockProfiles := []sqlcdb.RandomSampleEnabledCredentialProfilesRow{
 			{
 				ID:               "profile-sampled-1",
 				Type:             "codex",
@@ -382,7 +391,7 @@ func TestRandomSample(t *testing.T) {
 
 		var capturedParams sqlcdb.RandomSampleEnabledCredentialProfilesParams
 		mock := &MockQuerier{
-			randomSampleFn: func(ctx context.Context, arg sqlcdb.RandomSampleEnabledCredentialProfilesParams) ([]sqlcdb.CredentialProfile, error) {
+			randomSampleFn: func(ctx context.Context, arg sqlcdb.RandomSampleEnabledCredentialProfilesParams) ([]sqlcdb.RandomSampleEnabledCredentialProfilesRow, error) {
 				capturedParams = arg
 				return mockProfiles, nil
 			},
@@ -403,9 +412,9 @@ func TestRandomSample(t *testing.T) {
 	t.Run("seed affects ordering deterministically", func(t *testing.T) {
 		var capturedSeeds []string
 		mock := &MockQuerier{
-			randomSampleFn: func(ctx context.Context, arg sqlcdb.RandomSampleEnabledCredentialProfilesParams) ([]sqlcdb.CredentialProfile, error) {
+			randomSampleFn: func(ctx context.Context, arg sqlcdb.RandomSampleEnabledCredentialProfilesParams) ([]sqlcdb.RandomSampleEnabledCredentialProfilesRow, error) {
 				capturedSeeds = append(capturedSeeds, arg.Column2)
-				return []sqlcdb.CredentialProfile{}, nil
+				return []sqlcdb.RandomSampleEnabledCredentialProfilesRow{}, nil
 			},
 		}
 
@@ -421,8 +430,8 @@ func TestRandomSample(t *testing.T) {
 
 	t.Run("returns empty slice when no profiles match", func(t *testing.T) {
 		mock := &MockQuerier{
-			randomSampleFn: func(ctx context.Context, arg sqlcdb.RandomSampleEnabledCredentialProfilesParams) ([]sqlcdb.CredentialProfile, error) {
-				return []sqlcdb.CredentialProfile{}, nil
+			randomSampleFn: func(ctx context.Context, arg sqlcdb.RandomSampleEnabledCredentialProfilesParams) ([]sqlcdb.RandomSampleEnabledCredentialProfilesRow, error) {
+				return []sqlcdb.RandomSampleEnabledCredentialProfilesRow{}, nil
 			},
 		}
 
@@ -431,5 +440,51 @@ func TestRandomSample(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.Len(t, result, 0)
+	})
+}
+
+func TestGetByID(t *testing.T) {
+	t.Run("returns profile when found", func(t *testing.T) {
+		now := time.Now().UTC()
+		mock := &MockQuerier{
+			getByIDFn: func(ctx context.Context, id string) (sqlcdb.GetCredentialProfileByIDRow, error) {
+				assert.Equal(t, "profile-1", id)
+				return sqlcdb.GetCredentialProfileByIDRow{
+					ID:               "profile-1",
+					Type:             "copilot",
+					AccountID:        "octocat",
+					Enabled:          true,
+					Email:            "octocat@example.com",
+					Expired:          pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
+					LastRefreshAt:    pgtype.Timestamptz{Time: now, Valid: true},
+					EncryptedProfile: "enc",
+					EncryptedIv:      pgtype.Text{String: "iv", Valid: true},
+					EncryptedTag:     pgtype.Text{String: "tag", Valid: true},
+				}, nil
+			},
+		}
+
+		repo := &PostgresRepository{queries: mock}
+		profile, err := repo.GetByID(context.Background(), "profile-1")
+
+		require.NoError(t, err)
+		require.NotNil(t, profile)
+		assert.Equal(t, "profile-1", profile.ID)
+		assert.Equal(t, "copilot", profile.Type)
+		assert.Equal(t, "octocat", profile.AccountID)
+	})
+
+	t.Run("returns nil when not found", func(t *testing.T) {
+		mock := &MockQuerier{
+			getByIDFn: func(ctx context.Context, id string) (sqlcdb.GetCredentialProfileByIDRow, error) {
+				return sqlcdb.GetCredentialProfileByIDRow{}, pgx.ErrNoRows
+			},
+		}
+
+		repo := &PostgresRepository{queries: mock}
+		profile, err := repo.GetByID(context.Background(), "missing")
+
+		require.NoError(t, err)
+		assert.Nil(t, profile)
 	})
 }

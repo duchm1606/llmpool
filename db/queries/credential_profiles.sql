@@ -8,6 +8,8 @@ INSERT INTO credential_profiles (
     expired,
     last_refresh_at,
     encrypted_profile,
+    encrypted_iv,
+    encrypted_tag,
     created_at,
     modified_at
 )
@@ -20,6 +22,8 @@ VALUES (
     $6,
     $7,
     $8,
+    $9,
+    $10,
     NOW(),
     NOW()
 )
@@ -32,6 +36,8 @@ RETURNING
     expired,
     last_refresh_at,
     encrypted_profile,
+    encrypted_iv,
+    encrypted_tag,
     created_at,
     modified_at;
 
@@ -45,10 +51,29 @@ SELECT
     expired,
     last_refresh_at,
     encrypted_profile,
+    encrypted_iv,
+    encrypted_tag,
     created_at,
     modified_at
 FROM credential_profiles
 ORDER BY modified_at DESC;
+
+-- name: GetCredentialProfileByID :one
+SELECT
+    id,
+    type,
+    account_id,
+    enabled,
+    email,
+    expired,
+    last_refresh_at,
+    encrypted_profile,
+    encrypted_iv,
+    encrypted_tag,
+    created_at,
+    modified_at
+FROM credential_profiles
+WHERE id = $1;
 
 -- name: UpdateCredentialProfile :one
 UPDATE credential_profiles
@@ -60,6 +85,8 @@ SET
     expired = $6,
     last_refresh_at = $7,
     encrypted_profile = $8,
+    encrypted_iv = $9,
+    encrypted_tag = $10,
     modified_at = NOW()
 WHERE id = $1
 RETURNING
@@ -71,6 +98,8 @@ RETURNING
     expired,
     last_refresh_at,
     encrypted_profile,
+    encrypted_iv,
+    encrypted_tag,
     created_at,
     modified_at;
 
@@ -84,6 +113,8 @@ INSERT INTO credential_profiles (
     expired,
     last_refresh_at,
     encrypted_profile,
+    encrypted_iv,
+    encrypted_tag,
     created_at,
     modified_at
 ) VALUES (
@@ -95,6 +126,8 @@ INSERT INTO credential_profiles (
     $6,
     $7,
     $8,
+    $9,
+    $10,
     NOW(),
     NOW()
 )
@@ -105,6 +138,8 @@ DO UPDATE SET
     expired = EXCLUDED.expired,
     last_refresh_at = EXCLUDED.last_refresh_at,
     encrypted_profile = EXCLUDED.encrypted_profile,
+    encrypted_iv = EXCLUDED.encrypted_iv,
+    encrypted_tag = EXCLUDED.encrypted_tag,
     modified_at = NOW()
 RETURNING
     id,
@@ -115,6 +150,8 @@ RETURNING
     expired,
     last_refresh_at,
     encrypted_profile,
+    encrypted_iv,
+    encrypted_tag,
     created_at,
     modified_at;
 
@@ -128,6 +165,8 @@ SELECT
     expired,
     last_refresh_at,
     encrypted_profile,
+    encrypted_iv,
+    encrypted_tag,
     created_at,
     modified_at
 FROM credential_profiles
@@ -149,6 +188,8 @@ SELECT
     expired,
     last_refresh_at,
     encrypted_profile,
+    encrypted_iv,
+    encrypted_tag,
     created_at,
     modified_at
 FROM credential_profiles

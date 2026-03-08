@@ -32,6 +32,16 @@ func (m *mockRefreshRepo) List(ctx context.Context) ([]domaincredential.Profile,
 	return m.profiles, nil
 }
 
+func (m *mockRefreshRepo) GetByID(ctx context.Context, id string) (*domaincredential.Profile, error) {
+	for i := range m.profiles {
+		if m.profiles[i].ID == id {
+			profile := m.profiles[i]
+			return &profile, nil
+		}
+	}
+	return nil, nil
+}
+
 func (m *mockRefreshRepo) Update(ctx context.Context, profile domaincredential.Profile) (domaincredential.Profile, error) {
 	if m.updateErr != nil {
 		return domaincredential.Profile{}, m.updateErr
@@ -72,15 +82,19 @@ func (m *mockRefresher) Refresh(ctx context.Context, refreshToken string) (Refre
 // Mock encryptor that just passes through for testing
 type mockRefreshEncryptor struct{}
 
-func (m *mockRefreshEncryptor) Encrypt(plain string) (string, error) {
-	return "encrypted:" + plain, nil
+func (m *mockRefreshEncryptor) Encrypt(plain string) (string, string, string, error) {
+	return "encrypted:" + plain, "", "", nil
 }
 
-func (m *mockRefreshEncryptor) Decrypt(cipher string) (string, error) {
+func (m *mockRefreshEncryptor) Decrypt(cipher, iv, tag string) (string, error) {
 	if len(cipher) < 10 || cipher[:10] != "encrypted:" {
 		return "", errors.New("invalid cipher")
 	}
 	return cipher[10:], nil
+}
+
+func (m *mockRefreshEncryptor) ShouldEncrypt() bool {
+	return false
 }
 
 // createTestProfile creates a credential profile for testing
@@ -154,7 +168,11 @@ func TestRefreshDue_MapsRotatedTokensSafely(t *testing.T) {
 
 	// Decrypt and verify tokens
 	decryptor := &mockRefreshEncryptor{}
-	decrypted, err := decryptor.Decrypt(updatedProfile.EncryptedProfile)
+	decrypted, err := decryptor.Decrypt(
+		updatedProfile.EncryptedProfile,
+		stringValue(updatedProfile.EncryptedIV),
+		stringValue(updatedProfile.EncryptedTag),
+	)
 	require.NoError(t, err)
 
 	var payload CredentialProfile
@@ -210,7 +228,11 @@ func TestRefreshDue_PreservesRefreshTokenWhenNotRotated(t *testing.T) {
 
 	// Decrypt and verify tokens
 	decryptor := &mockRefreshEncryptor{}
-	decrypted, err := decryptor.Decrypt(repo.updated[0].EncryptedProfile)
+	decrypted, err := decryptor.Decrypt(
+		repo.updated[0].EncryptedProfile,
+		stringValue(repo.updated[0].EncryptedIV),
+		stringValue(repo.updated[0].EncryptedTag),
+	)
 	require.NoError(t, err)
 
 	var payload CredentialProfile
@@ -261,7 +283,11 @@ func TestRefreshDue_NotOverwritingRefreshWithAccess(t *testing.T) {
 
 	// Decrypt and verify
 	decryptor := &mockRefreshEncryptor{}
-	decrypted, err := decryptor.Decrypt(repo.updated[0].EncryptedProfile)
+	decrypted, err := decryptor.Decrypt(
+		repo.updated[0].EncryptedProfile,
+		stringValue(repo.updated[0].EncryptedIV),
+		stringValue(repo.updated[0].EncryptedTag),
+	)
 	require.NoError(t, err)
 
 	var payload CredentialProfile
@@ -377,6 +403,37 @@ func TestRefreshDue_NotDueYet(t *testing.T) {
 
 	// Should not refresh profiles that aren't due yet
 	assert.Len(t, repo.updated, 0, "profile not due should not be refreshed")
+}
+
+func TestRefreshCredential_UsesGetByID(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	profile := createTestProfile(t, "codex", true, now.Add(-time.Hour), "token", "refresh")
+
+	repo := &mockRefreshRepo{profiles: []domaincredential.Profile{profile}}
+	refreshers := map[string]Refresher{
+		"codex": &mockRefresher{result: RefreshResult{
+			AccessToken:  "new-access",
+			RefreshToken: "new-refresh",
+			ExpiresAt:    now.Add(time.Hour),
+		}},
+	}
+
+	service := NewRefreshService(repo, refreshers, &mockRefreshEncryptor{})
+	service.(*refreshService).now = func() time.Time { return now }
+
+	err := service.RefreshCredential(ctx, profile.ID)
+	require.NoError(t, err)
+	require.Len(t, repo.updated, 1)
+	assert.Equal(t, profile.ID, repo.updated[0].ID)
+}
+
+func TestRefreshCredential_NotFound(t *testing.T) {
+	service := NewRefreshService(&mockRefreshRepo{}, map[string]Refresher{}, &mockRefreshEncryptor{})
+	err := service.RefreshCredential(context.Background(), "missing")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
 }
 
 func TestIsDue(t *testing.T) {

@@ -37,19 +37,15 @@ func (s *refreshService) RefreshDue(ctx context.Context) error {
 
 // RefreshCredential refreshes a specific credential immediately, bypassing due checks.
 func (s *refreshService) RefreshCredential(ctx context.Context, credentialID string) error {
-	profiles, err := s.repo.List(ctx)
+	profile, err := s.repo.GetByID(ctx, credentialID)
 	if err != nil {
-		return fmt.Errorf("list profiles: %w", err)
+		return fmt.Errorf("get profile: %w", err)
+	}
+	if profile == nil {
+		return fmt.Errorf("credential %s not found", credentialID)
 	}
 
-	for _, profile := range profiles {
-		if profile.ID != credentialID {
-			continue
-		}
-		return s.refreshProfile(ctx, profile, true)
-	}
-
-	return fmt.Errorf("credential %s not found", credentialID)
+	return s.refreshProfile(ctx, *profile, true)
 }
 
 func (s *refreshService) refreshProfile(ctx context.Context, profile domaincredential.Profile, force bool) error {
@@ -66,7 +62,7 @@ func (s *refreshService) refreshProfile(ctx context.Context, profile domaincrede
 		return nil
 	}
 
-	oldPayload, err := s.decryptProfile(profile.EncryptedProfile)
+	oldPayload, err := s.decryptProfile(profile)
 	if err != nil {
 		return fmt.Errorf("decrypt existing profile %s: %w", profile.ID, err)
 	}
@@ -111,12 +107,14 @@ func (s *refreshService) refreshProfile(ctx context.Context, profile domaincrede
 		return fmt.Errorf("marshal refreshed profile json: %w", marshalErr)
 	}
 
-	encProfile, encryptErr := s.encryptor.Encrypt(string(raw))
+	encProfile, iv, tag, encryptErr := s.encryptor.Encrypt(string(raw))
 	if encryptErr != nil {
 		return fmt.Errorf("encrypt refreshed profile json: %w", encryptErr)
 	}
 
 	profile.EncryptedProfile = encProfile
+	profile.EncryptedIV = stringPtrOrNil(iv)
+	profile.EncryptedTag = stringPtrOrNil(tag)
 	profile.Expired = result.ExpiresAt
 	profile.Enabled = true
 	profile.LastRefreshAt = now
@@ -128,8 +126,8 @@ func (s *refreshService) refreshProfile(ctx context.Context, profile domaincrede
 	return nil
 }
 
-func (s *refreshService) decryptProfile(encrypted string) (CredentialProfile, error) {
-	decrypted, err := s.encryptor.Decrypt(encrypted)
+func (s *refreshService) decryptProfile(profile domaincredential.Profile) (CredentialProfile, error) {
+	decrypted, err := s.encryptor.Decrypt(profile.EncryptedProfile, stringValue(profile.EncryptedIV), stringValue(profile.EncryptedTag))
 	if err != nil {
 		return CredentialProfile{}, fmt.Errorf("decrypt profile: %w", err)
 	}

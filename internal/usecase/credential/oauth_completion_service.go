@@ -13,17 +13,19 @@ import (
 )
 
 type oAuthCompletionService struct {
-	repo      Repository
-	encryptor Encryptor
-	now       func() time.Time
+	repo              Repository
+	encryptor         Encryptor
+	now               func() time.Time
+	registryRefresher RegistryRefresher
 }
 
 // NewOAuthCompletionService creates a new OAuth completion service
-func NewOAuthCompletionService(repo Repository, encryptor Encryptor) OAuthCompletionService {
+func NewOAuthCompletionService(repo Repository, encryptor Encryptor, registryRefresher RegistryRefresher) OAuthCompletionService {
 	return &oAuthCompletionService{
-		repo:      repo,
-		encryptor: encryptor,
-		now:       time.Now,
+		repo:              repo,
+		encryptor:         encryptor,
+		now:               time.Now,
+		registryRefresher: registryRefresher,
 	}
 }
 
@@ -41,6 +43,7 @@ func (s *oAuthCompletionService) CompleteOAuth(ctx context.Context, accountID st
 		"refresh_token": tokenPayload.RefreshToken,
 		"token_type":    tokenPayload.TokenType,
 		"scope":         tokenPayload.Scope,
+		"expired":       tokenPayload.ExpiresAt,
 	}
 
 	rawProfile, err := json.Marshal(profileData)
@@ -48,7 +51,7 @@ func (s *oAuthCompletionService) CompleteOAuth(ctx context.Context, accountID st
 		return domaincredential.Profile{}, fmt.Errorf("marshal credential profile: %w", err)
 	}
 
-	encProfile, err := s.encryptor.Encrypt(string(rawProfile))
+	encProfile, iv, tag, err := s.encryptor.Encrypt(string(rawProfile))
 	if err != nil {
 		return domaincredential.Profile{}, fmt.Errorf("encrypt profile: %w", err)
 	}
@@ -62,7 +65,18 @@ func (s *oAuthCompletionService) CompleteOAuth(ctx context.Context, accountID st
 		Expired:          tokenPayload.ExpiresAt,
 		LastRefreshAt:    s.now(),
 		EncryptedProfile: encProfile,
+		EncryptedIV:      stringPtrOrNil(iv),
+		EncryptedTag:     stringPtrOrNil(tag),
 	}
 
-	return s.repo.UpsertByTypeAccount(ctx, profile)
+	savedProfile, err := s.repo.UpsertByTypeAccount(ctx, profile)
+	if err != nil {
+		return domaincredential.Profile{}, err
+	}
+
+	if s.registryRefresher != nil {
+		s.registryRefresher(ctx, savedProfile.Type, savedProfile.AccountID)
+	}
+
+	return savedProfile, nil
 }

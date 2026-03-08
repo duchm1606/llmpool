@@ -39,7 +39,7 @@ func TestLoad_UsesEnvironmentOverride(t *testing.T) {
 	}
 }
 
-func TestLoad_RequiresEncryptionKeyFromEnv(t *testing.T) {
+func TestLoad_AllowsMissingEncryptionKeyFromEnv(t *testing.T) {
 	rootDir, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatalf("resolve root dir: %v", err)
@@ -62,8 +62,8 @@ func TestLoad_RequiresEncryptionKeyFromEnv(t *testing.T) {
 	t.Setenv("LLMPOOL_OAUTH_CODEX_CLIENT_ID", "test-client-id")
 
 	_, err = Load()
-	if err == nil {
-		t.Fatalf("expected error when encryption key is missing")
+	if err != nil {
+		t.Fatalf("expected config to load without encryption key, got: %v", err)
 	}
 }
 

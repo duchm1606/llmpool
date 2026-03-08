@@ -17,7 +17,7 @@ type CredentialRepository interface {
 
 // Encryptor handles credential decryption.
 type Encryptor interface {
-	Decrypt(cipher string) (string, error)
+	Decrypt(cipher, iv, tag string) (string, error)
 }
 
 // ProviderChecker performs liveness checks against a provider.

@@ -9,6 +9,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const dailyKeyLayout = "2006-01-02"
+
 // StatsServiceConfig holds configuration for the stats service.
 type StatsServiceConfig struct {
 	CacheTTL time.Duration // How long to cache stats
@@ -46,20 +48,25 @@ func NewStatsService(
 
 // periodToTimeRange converts a period string to start/end times.
 func periodToTimeRange(period string) (start, end time.Time, err error) {
-	now := time.Now().UTC()
+	return periodToTimeRangeFromNow(time.Now().UTC(), period)
+}
+
+func periodToTimeRangeFromNow(now time.Time, period string) (start, end time.Time, err error) {
+	now = now.UTC()
 	end = now
+	todayStart := beginningOfUTCDay(now)
 
 	switch period {
 	case "today":
-		start = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		start = todayStart
 	case "7d":
-		start = now.AddDate(0, 0, -7)
+		start = todayStart.AddDate(0, 0, -6)
 	case "30d":
-		start = now.AddDate(0, 0, -30)
+		start = todayStart.AddDate(0, 0, -29)
 	case "90d":
-		start = now.AddDate(0, 0, -90)
+		start = todayStart.AddDate(0, 0, -89)
 	case "365d":
-		start = now.AddDate(0, 0, -365)
+		start = todayStart.AddDate(0, 0, -364)
 	default:
 		return time.Time{}, time.Time{}, fmt.Errorf("invalid period: %s", period)
 	}
@@ -163,9 +170,7 @@ func (s *statsService) buildStats(ctx context.Context, startTime, endTime time.T
 	if err != nil {
 		return nil, fmt.Errorf("aggregate daily: %w", err)
 	}
-	if dailyStats == nil {
-		dailyStats = []domainusage.DailyStats{}
-	}
+	dailyStats = fillMissingDailyStats(startTime, endTime, dailyStats)
 
 	// Get model stats
 	modelStats, err := s.repo.AggregateByModel(ctx, startTime, endTime)
@@ -193,6 +198,46 @@ func (s *statsService) buildStats(ctx context.Context, startTime, endTime time.T
 		CredentialStats: credentialStats,
 		GeneratedAt:     time.Now().UTC(),
 	}, nil
+}
+
+func beginningOfUTCDay(t time.Time) time.Time {
+	t = t.UTC()
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+func fillMissingDailyStats(startTime, endTime time.Time, dailyStats []domainusage.DailyStats) []domainusage.DailyStats {
+	startDay := beginningOfUTCDay(startTime)
+	endDay := beginningOfUTCDay(endTime)
+
+	if endTime.Equal(endDay) && endTime.After(startTime) {
+		endDay = endDay.AddDate(0, 0, -1)
+	}
+
+	if endDay.Before(startDay) {
+		return []domainusage.DailyStats{}
+	}
+
+	statsByDay := make(map[string]domainusage.DailyStats, len(dailyStats))
+	for _, stat := range dailyStats {
+		day := beginningOfUTCDay(stat.Day)
+		stat.Day = day
+		statsByDay[day.Format(dailyKeyLayout)] = stat
+	}
+
+	totalDays := int(endDay.Sub(startDay).Hours()/24) + 1
+	filled := make([]domainusage.DailyStats, 0, totalDays)
+	for i := 0; i < totalDays; i++ {
+		day := startDay.AddDate(0, 0, i)
+		if stat, ok := statsByDay[day.Format(dailyKeyLayout)]; ok {
+			stat.Day = day
+			filled = append(filled, stat)
+			continue
+		}
+
+		filled = append(filled, domainusage.DailyStats{Day: day})
+	}
+
+	return filled
 }
 
 // GetAuditLogs returns paginated audit logs.

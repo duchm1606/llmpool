@@ -7,12 +7,24 @@ import (
 
 	domaincredential "github.com/duchoang/llmpool/internal/domain/credential"
 	"github.com/duchoang/llmpool/internal/infra/credential/sqlcdb"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type PostgresRepository struct {
-	queries sqlcdb.Querier
+	queries credentialQueries
+}
+
+type credentialQueries interface {
+	CreateCredentialProfile(ctx context.Context, arg sqlcdb.CreateCredentialProfileParams) (sqlcdb.CreateCredentialProfileRow, error)
+	ListCredentialProfiles(ctx context.Context) ([]sqlcdb.ListCredentialProfilesRow, error)
+	GetCredentialProfileByID(ctx context.Context, id string) (sqlcdb.GetCredentialProfileByIDRow, error)
+	UpdateCredentialProfile(ctx context.Context, arg sqlcdb.UpdateCredentialProfileParams) (sqlcdb.UpdateCredentialProfileRow, error)
+	UpsertCredentialProfileByTypeAccount(ctx context.Context, arg sqlcdb.UpsertCredentialProfileByTypeAccountParams) (sqlcdb.UpsertCredentialProfileByTypeAccountRow, error)
+	ListEnabledCredentialProfiles(ctx context.Context) ([]sqlcdb.ListEnabledCredentialProfilesRow, error)
+	CountEnabledCredentialProfiles(ctx context.Context) (int64, error)
+	RandomSampleEnabledCredentialProfiles(ctx context.Context, arg sqlcdb.RandomSampleEnabledCredentialProfilesParams) ([]sqlcdb.RandomSampleEnabledCredentialProfilesRow, error)
 }
 
 func NewCredentialRepository(pool *pgxpool.Pool) *PostgresRepository {
@@ -29,12 +41,14 @@ func (r *PostgresRepository) Save(ctx context.Context, profile domaincredential.
 		Expired:          toTimestamptz(profile.Expired),
 		LastRefreshAt:    toTimestamptz(profile.LastRefreshAt),
 		EncryptedProfile: profile.EncryptedProfile,
+		EncryptedIv:      toText(profile.EncryptedIV),
+		EncryptedTag:     toText(profile.EncryptedTag),
 	})
 	if err != nil {
 		return domaincredential.Profile{}, fmt.Errorf("create credential profile: %w", err)
 	}
 
-	return toDomainProfile(row), nil
+	return toDomainProfileFromCreate(row), nil
 }
 
 func (r *PostgresRepository) List(ctx context.Context) ([]domaincredential.Profile, error) {
@@ -45,10 +59,23 @@ func (r *PostgresRepository) List(ctx context.Context) ([]domaincredential.Profi
 
 	out := make([]domaincredential.Profile, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, toDomainProfile(row))
+		out = append(out, toDomainProfileFromList(row))
 	}
 
 	return out, nil
+}
+
+func (r *PostgresRepository) GetByID(ctx context.Context, id string) (*domaincredential.Profile, error) {
+	row, err := r.queries.GetCredentialProfileByID(ctx, id)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get credential profile by id: %w", err)
+	}
+
+	profile := toDomainProfileFromGetByID(row)
+	return &profile, nil
 }
 
 func (r *PostgresRepository) Update(ctx context.Context, profile domaincredential.Profile) (domaincredential.Profile, error) {
@@ -61,12 +88,14 @@ func (r *PostgresRepository) Update(ctx context.Context, profile domaincredentia
 		Expired:          toTimestamptz(profile.Expired),
 		LastRefreshAt:    toTimestamptz(profile.LastRefreshAt),
 		EncryptedProfile: profile.EncryptedProfile,
+		EncryptedIv:      toText(profile.EncryptedIV),
+		EncryptedTag:     toText(profile.EncryptedTag),
 	})
 	if err != nil {
 		return domaincredential.Profile{}, fmt.Errorf("update credential profile: %w", err)
 	}
 
-	return toDomainProfile(row), nil
+	return toDomainProfileFromUpdate(row), nil
 }
 
 func (r *PostgresRepository) UpsertByTypeAccount(ctx context.Context, profile domaincredential.Profile) (domaincredential.Profile, error) {
@@ -79,12 +108,14 @@ func (r *PostgresRepository) UpsertByTypeAccount(ctx context.Context, profile do
 		Expired:          toTimestamptz(profile.Expired),
 		LastRefreshAt:    toTimestamptz(profile.LastRefreshAt),
 		EncryptedProfile: profile.EncryptedProfile,
+		EncryptedIv:      toText(profile.EncryptedIV),
+		EncryptedTag:     toText(profile.EncryptedTag),
 	})
 	if err != nil {
 		return domaincredential.Profile{}, fmt.Errorf("upsert credential profile: %w", err)
 	}
 
-	return toDomainProfile(row), nil
+	return toDomainProfileFromUpsert(row), nil
 }
 
 func (r *PostgresRepository) ListEnabled(ctx context.Context) ([]domaincredential.Profile, error) {
@@ -95,7 +126,7 @@ func (r *PostgresRepository) ListEnabled(ctx context.Context) ([]domaincredentia
 
 	out := make([]domaincredential.Profile, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, toDomainProfile(row))
+		out = append(out, toDomainProfileFromListEnabled(row))
 	}
 
 	return out, nil
@@ -132,13 +163,13 @@ func (r *PostgresRepository) RandomSample(ctx context.Context, sampleSize int, s
 
 	out := make([]domaincredential.Profile, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, toDomainProfile(row))
+		out = append(out, toDomainProfileFromRandomSample(row))
 	}
 
 	return out, nil
 }
 
-func toDomainProfile(row sqlcdb.CredentialProfile) domaincredential.Profile {
+func toDomainProfileFromCreate(row sqlcdb.CreateCredentialProfileRow) domaincredential.Profile {
 	return domaincredential.Profile{
 		ID:               row.ID,
 		Type:             row.Type,
@@ -148,6 +179,98 @@ func toDomainProfile(row sqlcdb.CredentialProfile) domaincredential.Profile {
 		Expired:          fromTimestamptz(row.Expired),
 		LastRefreshAt:    fromTimestamptz(row.LastRefreshAt),
 		EncryptedProfile: row.EncryptedProfile,
+		EncryptedIV:      fromText(row.EncryptedIv),
+		EncryptedTag:     fromText(row.EncryptedTag),
+	}
+}
+
+func toDomainProfileFromUpdate(row sqlcdb.UpdateCredentialProfileRow) domaincredential.Profile {
+	return domaincredential.Profile{
+		ID:               row.ID,
+		Type:             row.Type,
+		AccountID:        row.AccountID,
+		Enabled:          row.Enabled,
+		Email:            row.Email,
+		Expired:          fromTimestamptz(row.Expired),
+		LastRefreshAt:    fromTimestamptz(row.LastRefreshAt),
+		EncryptedProfile: row.EncryptedProfile,
+		EncryptedIV:      fromText(row.EncryptedIv),
+		EncryptedTag:     fromText(row.EncryptedTag),
+	}
+}
+
+func toDomainProfileFromUpsert(row sqlcdb.UpsertCredentialProfileByTypeAccountRow) domaincredential.Profile {
+	return domaincredential.Profile{
+		ID:               row.ID,
+		Type:             row.Type,
+		AccountID:        row.AccountID,
+		Enabled:          row.Enabled,
+		Email:            row.Email,
+		Expired:          fromTimestamptz(row.Expired),
+		LastRefreshAt:    fromTimestamptz(row.LastRefreshAt),
+		EncryptedProfile: row.EncryptedProfile,
+		EncryptedIV:      fromText(row.EncryptedIv),
+		EncryptedTag:     fromText(row.EncryptedTag),
+	}
+}
+
+func toDomainProfileFromList(row sqlcdb.ListCredentialProfilesRow) domaincredential.Profile {
+	return domaincredential.Profile{
+		ID:               row.ID,
+		Type:             row.Type,
+		AccountID:        row.AccountID,
+		Enabled:          row.Enabled,
+		Email:            row.Email,
+		Expired:          fromTimestamptz(row.Expired),
+		LastRefreshAt:    fromTimestamptz(row.LastRefreshAt),
+		EncryptedProfile: row.EncryptedProfile,
+		EncryptedIV:      fromText(row.EncryptedIv),
+		EncryptedTag:     fromText(row.EncryptedTag),
+	}
+}
+
+func toDomainProfileFromGetByID(row sqlcdb.GetCredentialProfileByIDRow) domaincredential.Profile {
+	return domaincredential.Profile{
+		ID:               row.ID,
+		Type:             row.Type,
+		AccountID:        row.AccountID,
+		Enabled:          row.Enabled,
+		Email:            row.Email,
+		Expired:          fromTimestamptz(row.Expired),
+		LastRefreshAt:    fromTimestamptz(row.LastRefreshAt),
+		EncryptedProfile: row.EncryptedProfile,
+		EncryptedIV:      fromText(row.EncryptedIv),
+		EncryptedTag:     fromText(row.EncryptedTag),
+	}
+}
+
+func toDomainProfileFromListEnabled(row sqlcdb.ListEnabledCredentialProfilesRow) domaincredential.Profile {
+	return domaincredential.Profile{
+		ID:               row.ID,
+		Type:             row.Type,
+		AccountID:        row.AccountID,
+		Enabled:          row.Enabled,
+		Email:            row.Email,
+		Expired:          fromTimestamptz(row.Expired),
+		LastRefreshAt:    fromTimestamptz(row.LastRefreshAt),
+		EncryptedProfile: row.EncryptedProfile,
+		EncryptedIV:      fromText(row.EncryptedIv),
+		EncryptedTag:     fromText(row.EncryptedTag),
+	}
+}
+
+func toDomainProfileFromRandomSample(row sqlcdb.RandomSampleEnabledCredentialProfilesRow) domaincredential.Profile {
+	return domaincredential.Profile{
+		ID:               row.ID,
+		Type:             row.Type,
+		AccountID:        row.AccountID,
+		Enabled:          row.Enabled,
+		Email:            row.Email,
+		Expired:          fromTimestamptz(row.Expired),
+		LastRefreshAt:    fromTimestamptz(row.LastRefreshAt),
+		EncryptedProfile: row.EncryptedProfile,
+		EncryptedIV:      fromText(row.EncryptedIv),
+		EncryptedTag:     fromText(row.EncryptedTag),
 	}
 }
 
@@ -161,4 +284,21 @@ func fromTimestamptz(ts pgtype.Timestamptz) time.Time {
 	}
 
 	return ts.Time
+}
+
+func toText(value *string) pgtype.Text {
+	if value == nil {
+		return pgtype.Text{}
+	}
+
+	return pgtype.Text{String: *value, Valid: true}
+}
+
+func fromText(value pgtype.Text) *string {
+	if !value.Valid {
+		return nil
+	}
+
+	v := value.String
+	return &v
 }

@@ -211,7 +211,7 @@ func (s *Service) checkSingleProfile(ctx context.Context, profile domaincredenti
 	)
 
 	// Decrypt credential payload
-	payload, err := s.extractAuthPayload(profile.EncryptedProfile)
+	payload, err := s.extractAuthPayload(profile.EncryptedProfile, profile.EncryptedIV, profile.EncryptedTag)
 	if err != nil {
 		s.logger.Error("decrypt credential failed",
 			zap.String("credential_id", profile.ID),
@@ -364,8 +364,8 @@ func selectCheckToken(profileType string, payload authPayload) (token, kind stri
 }
 
 // extractAuthPayload decrypts the credential payload and extracts auth fields.
-func (s *Service) extractAuthPayload(encryptedProfile string) (authPayload, error) {
-	decrypted, err := s.encryptor.Decrypt(encryptedProfile)
+func (s *Service) extractAuthPayload(encryptedProfile string, encryptedIV, encryptedTag *string) (authPayload, error) {
+	decrypted, err := s.encryptor.Decrypt(encryptedProfile, stringValue(encryptedIV), stringValue(encryptedTag))
 	if err != nil {
 		return authPayload{}, err
 	}
@@ -376,6 +376,14 @@ func (s *Service) extractAuthPayload(encryptedProfile string) (authPayload, erro
 	}
 
 	return payload, nil
+}
+
+func stringValue(ptr *string) string {
+	if ptr == nil {
+		return ""
+	}
+
+	return *ptr
 }
 
 // checkWithRetry performs check with retry logic for network errors.

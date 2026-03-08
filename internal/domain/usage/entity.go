@@ -24,11 +24,12 @@ type AuditLog struct {
 
 	// Token usage
 	PromptTokens     int `json:"prompt_tokens"`
+	CachedTokens     int `json:"cached_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
 
 	// Pricing (in microdollars: $0.01 = 10000)
-	InputPriceMicros  int64 `json:"input_price_micros"`
+	InputPriceMicros  int64 `json:"input_price_micros"` // regular + cached input
 	OutputPriceMicros int64 `json:"output_price_micros"`
 	TotalPriceMicros  int64 `json:"total_price_micros"`
 
@@ -57,6 +58,7 @@ type UsageRecord struct {
 	CredentialAccountID string `json:"credential_account_id"`
 
 	PromptTokens     int `json:"prompt_tokens"`
+	CachedTokens     int `json:"cached_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 
 	Status       Status `json:"status"`
@@ -72,6 +74,7 @@ type ModelStats struct {
 	Model            string `json:"model"`
 	RequestCount     int64  `json:"request_count"`
 	PromptTokens     int64  `json:"prompt_tokens"`
+	CachedTokens     int64  `json:"cached_tokens"`
 	CompletionTokens int64  `json:"completion_tokens"`
 	TotalTokens      int64  `json:"total_tokens"`
 	TotalPriceMicros int64  `json:"total_price_micros"`
@@ -87,6 +90,7 @@ type CredentialStats struct {
 	CredentialAccountID string `json:"credential_account_id"`
 	RequestCount        int64  `json:"request_count"`
 	PromptTokens        int64  `json:"prompt_tokens"`
+	CachedTokens        int64  `json:"cached_tokens"`
 	CompletionTokens    int64  `json:"completion_tokens"`
 	TotalTokens         int64  `json:"total_tokens"`
 	TotalPriceMicros    int64  `json:"total_price_micros"`
@@ -119,6 +123,7 @@ type DailyStats struct {
 type Overview struct {
 	TotalRequests         int64   `json:"total_requests"`
 	TotalPromptTokens     int64   `json:"total_prompt_tokens"`
+	TotalCachedTokens     int64   `json:"total_cached_tokens"`
 	TotalCompletionTokens int64   `json:"total_completion_tokens"`
 	TotalTokens           int64   `json:"total_tokens"`
 	TotalPriceMicros      int64   `json:"total_price_micros"`

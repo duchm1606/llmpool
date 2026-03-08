@@ -6,18 +6,33 @@ package sqlcdb
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
+	AggregateUsageByCredential(ctx context.Context, arg AggregateUsageByCredentialParams) ([]AggregateUsageByCredentialRow, error)
+	AggregateUsageByModel(ctx context.Context, arg AggregateUsageByModelParams) ([]AggregateUsageByModelRow, error)
+	AggregateUsageDaily(ctx context.Context, arg AggregateUsageDailyParams) ([]AggregateUsageDailyRow, error)
+	AggregateUsageHourly(ctx context.Context, arg AggregateUsageHourlyParams) ([]AggregateUsageHourlyRow, error)
 	CountEnabledCredentialProfiles(ctx context.Context) (int64, error)
-	CreateCredentialProfile(ctx context.Context, arg CreateCredentialProfileParams) (CredentialProfile, error)
-	ListCredentialProfiles(ctx context.Context) ([]CredentialProfile, error)
-	ListEnabledCredentialProfiles(ctx context.Context) ([]CredentialProfile, error)
+	CountUsageAuditLogs(ctx context.Context, arg CountUsageAuditLogsParams) (int64, error)
+	CreateCredentialProfile(ctx context.Context, arg CreateCredentialProfileParams) (CreateCredentialProfileRow, error)
+	CreateUsageAuditLog(ctx context.Context, arg CreateUsageAuditLogParams) (UsageAuditLog, error)
+	DeleteUsageAuditLogsBefore(ctx context.Context, createdAt pgtype.Timestamptz) (int64, error)
+	GetCredentialProfileByID(ctx context.Context, id string) (GetCredentialProfileByIDRow, error)
+	GetUsageAuditLogByRequestID(ctx context.Context, requestID string) (UsageAuditLog, error)
+	GetUsageOverview(ctx context.Context, arg GetUsageOverviewParams) (GetUsageOverviewRow, error)
+	ListCredentialProfiles(ctx context.Context) ([]ListCredentialProfilesRow, error)
+	ListEnabledCredentialProfiles(ctx context.Context) ([]ListEnabledCredentialProfilesRow, error)
+	ListUsageAuditLogs(ctx context.Context, arg ListUsageAuditLogsParams) ([]UsageAuditLog, error)
+	ListUsageAuditLogsByCredential(ctx context.Context, arg ListUsageAuditLogsByCredentialParams) ([]UsageAuditLog, error)
+	ListUsageAuditLogsByModel(ctx context.Context, arg ListUsageAuditLogsByModelParams) ([]UsageAuditLog, error)
 	// Deterministic random sampling using hash ordering on (id, seed).
 	// The seed parameter allows reproducible ordering across calls.
-	RandomSampleEnabledCredentialProfiles(ctx context.Context, arg RandomSampleEnabledCredentialProfilesParams) ([]CredentialProfile, error)
-	UpdateCredentialProfile(ctx context.Context, arg UpdateCredentialProfileParams) (CredentialProfile, error)
-	UpsertCredentialProfileByTypeAccount(ctx context.Context, arg UpsertCredentialProfileByTypeAccountParams) (CredentialProfile, error)
+	RandomSampleEnabledCredentialProfiles(ctx context.Context, arg RandomSampleEnabledCredentialProfilesParams) ([]RandomSampleEnabledCredentialProfilesRow, error)
+	UpdateCredentialProfile(ctx context.Context, arg UpdateCredentialProfileParams) (UpdateCredentialProfileRow, error)
+	UpsertCredentialProfileByTypeAccount(ctx context.Context, arg UpsertCredentialProfileByTypeAccountParams) (UpsertCredentialProfileByTypeAccountRow, error)
 }
 
 var _ Querier = (*Queries)(nil)

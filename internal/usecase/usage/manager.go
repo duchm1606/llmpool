@@ -159,11 +159,13 @@ func (m *Manager) processBatch(ctx context.Context, batch []domainusage.UsageRec
 
 func (m *Manager) processRecord(ctx context.Context, record domainusage.UsageRecord) {
 	// Calculate pricing
-	inputMicros, outputMicros, totalMicros := m.pricing.CalculatePrice(
+	inputMicros, cachedMicros, outputMicros, totalMicros := m.pricing.CalculatePrice(
 		record.Model,
 		record.PromptTokens,
+		record.CachedTokens,
 		record.CompletionTokens,
 	)
+	inputPriceMicros := inputMicros + cachedMicros
 
 	// Calculate duration
 	durationMs := 0
@@ -181,9 +183,10 @@ func (m *Manager) processRecord(ctx context.Context, record domainusage.UsageRec
 		CredentialType:      record.CredentialType,
 		CredentialAccountID: record.CredentialAccountID,
 		PromptTokens:        record.PromptTokens,
+		CachedTokens:        record.CachedTokens,
 		CompletionTokens:    record.CompletionTokens,
-		TotalTokens:         record.PromptTokens + record.CompletionTokens,
-		InputPriceMicros:    inputMicros,
+		TotalTokens:         record.PromptTokens + record.CachedTokens + record.CompletionTokens,
+		InputPriceMicros:    inputPriceMicros,
 		OutputPriceMicros:   outputMicros,
 		TotalPriceMicros:    totalMicros,
 		Status:              record.Status,
@@ -206,6 +209,7 @@ func (m *Manager) processRecord(ctx context.Context, record domainusage.UsageRec
 	m.logger.Debug("usage audit log stored",
 		zap.String("request_id", record.RequestID),
 		zap.String("model", record.Model),
+		zap.Int("cached_tokens", record.CachedTokens),
 		zap.Int("total_tokens", log.TotalTokens),
 		zap.Int64("total_price_micros", totalMicros),
 	)

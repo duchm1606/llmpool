@@ -19,4 +19,30 @@ type CredentialProfile struct {
 	EncryptedProfile string             `json:"encrypted_profile"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	ModifiedAt       pgtype.Timestamptz `json:"modified_at"`
+	EncryptedIv      pgtype.Text        `json:"encrypted_iv"`
+	EncryptedTag     pgtype.Text        `json:"encrypted_tag"`
+}
+
+type UsageAuditLog struct {
+	ID                  string             `json:"id"`
+	RequestID           string             `json:"request_id"`
+	Model               string             `json:"model"`
+	Provider            string             `json:"provider"`
+	CredentialID        string             `json:"credential_id"`
+	CredentialType      string             `json:"credential_type"`
+	CredentialAccountID string             `json:"credential_account_id"`
+	PromptTokens        int32              `json:"prompt_tokens"`
+	CompletionTokens    int32              `json:"completion_tokens"`
+	TotalTokens         int32              `json:"total_tokens"`
+	InputPriceMicros    int64              `json:"input_price_micros"`
+	OutputPriceMicros   int64              `json:"output_price_micros"`
+	TotalPriceMicros    int64              `json:"total_price_micros"`
+	Status              string             `json:"status"`
+	ErrorMessage        pgtype.Text        `json:"error_message"`
+	StartedAt           pgtype.Timestamptz `json:"started_at"`
+	CompletedAt         pgtype.Timestamptz `json:"completed_at"`
+	DurationMs          int32              `json:"duration_ms"`
+	Stream              bool               `json:"stream"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	CachedTokens        int32              `json:"cached_tokens"`
 }

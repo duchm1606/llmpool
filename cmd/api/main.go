@@ -47,14 +47,17 @@ func main() {
 		_ = loggerinfra.Sync()
 	}()
 
+	var encryptor securityinfra.Encryptor
 	encryptionKey := os.Getenv("LLMPOOL_SECURITY_ENCRYPTION_KEY")
 	if encryptionKey == "" {
-		panic(fmt.Errorf("LLMPOOL_SECURITY_ENCRYPTION_KEY is required"))
-	}
-
-	encryptor, err := securityinfra.NewAesGCMEncryptor(encryptionKey)
-	if err != nil {
-		panic(fmt.Errorf("initialize encryptor: %w", err))
+		log.Warn("LLMPOOL_SECURITY_ENCRYPTION_KEY is not set; credential payloads will be stored as plaintext (development mode)")
+		encryptor = securityinfra.NewNoopEncryptor()
+	} else {
+		encryptor, err = securityinfra.NewAesGCMEncryptor(encryptionKey)
+		if err != nil {
+			panic(fmt.Errorf("initialize encryptor: %w", err))
+		}
+		log.Info("credential payload encryption enabled")
 	}
 
 	healthService := usecasehealth.NewService()
@@ -77,8 +80,28 @@ func main() {
 	log.Info("redis connected", zap.String("addr", cfg.Redis.Addr))
 
 	profileRepo := credentialrepo.NewCredentialRepository(postgresPool)
-	importService := usecasecredential.NewImportService(profileRepo, encryptor)
-	oauthCompletionService := usecasecredential.NewCompletionService(profileRepo, encryptor)
+	var providerRegistry usecasecompletion.ProviderRegistry
+	registryRefresher := func(ctx context.Context, profileType, accountID string) {
+		if providerRegistry == nil {
+			return
+		}
+
+		refreshableRegistry, ok := providerRegistry.(interface{ Refresh(context.Context) })
+		if !ok {
+			return
+		}
+
+		refreshableRegistry.Refresh(ctx)
+		log.Info("provider registry refreshed after credential update",
+			zap.String("profile_type", profileType),
+			zap.String("account_id", accountID),
+		)
+	}
+
+	importService := usecasecredential.NewImportService(profileRepo, encryptor, registryRefresher)
+	listService := usecasecredential.NewListService(profileRepo)
+	statusService := usecasecredential.NewStatusService(profileRepo)
+	oauthCompletionService := usecasecredential.NewCompletionService(profileRepo, encryptor, registryRefresher)
 
 	oauthProvider := oauthinfra.NewCodexProvider(cfg.OAuth.Codex)
 	oauthSessionStore := oauthinfra.NewRedisSessionStore(redisClient, cfg.OAuth.Codex.SessionTTL)
@@ -101,7 +124,7 @@ func main() {
 	refreshers["copilot"] = copilotRefresher
 
 	// Create Copilot OAuth completion service
-	copilotOAuthCompletionService := usecasecredential.NewCopilotCompletionService(profileRepo, encryptor)
+	copilotOAuthCompletionService := usecasecredential.NewCopilotCompletionService(profileRepo, encryptor, registryRefresher)
 
 	refreshService := usecasecredential.NewRefreshService(profileRepo, refreshers, encryptor)
 
@@ -245,7 +268,6 @@ func main() {
 	// Initialize completion service if routing is enabled
 	var completionService usecasecompletion.CompletionService
 	var completionRouter usecasecompletion.Router
-	var providerRegistry usecasecompletion.ProviderRegistry
 	if cfg.Routing.Enabled {
 		completionService, completionRouter, providerRegistry = initCompletionService(cfg, profileRepo, encryptor, refreshService, log)
 		// Wire usage publisher if usage tracking is enabled
@@ -262,6 +284,8 @@ func main() {
 		Development:                   cfg.Log.Development,
 		HealthService:                 healthService,
 		ImportService:                 importService,
+		ListService:                   listService,
+		StatusService:                 statusService,
 		RefreshService:                refreshService,
 		QuotaService:                  quotaService,
 		OAuthProvider:                 oauthProvider,

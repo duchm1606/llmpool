@@ -8,6 +8,7 @@ export interface OverviewStats {
   error_rate: number;
   period: string;
   last_updated_at?: string;
+  total_cached_tokens?: number;
 }
 
 export interface HeatmapDataPoint {
@@ -27,7 +28,9 @@ export interface ModelStats {
   provider: string;
   requests: number;
   tokens_in: number;
+  cached_tokens: number;
   tokens_out: number;
+  total_tokens: number;
   cost: number;
   avg_latency_ms: number;
   error_count: number;
@@ -40,11 +43,70 @@ export interface CredentialStats {
   credential_account_id: string;
   requests: number;
   tokens_in: number;
+  cached_tokens: number;
   tokens_out: number;
   total_tokens: number;
   cost: number;
   error_count: number;
   canceled_count: number;
+}
+
+export interface CredentialProfile {
+  id: string;
+  type: string;
+  account_id: string;
+  email: string;
+  enabled: boolean;
+  expired: string;
+  last_refresh_at: string;
+}
+
+export interface CredentialStatusUpdateResponse {
+  id: string;
+  enabled: boolean;
+  expired?: string;
+  last_refresh_at?: string;
+}
+
+export interface CopilotDeviceCodeResponse {
+  status: 'ok' | 'error';
+  device_code?: string;
+  user_code?: string;
+  verification_uri?: string;
+  expires_in?: number;
+  interval?: number;
+  error?: string;
+}
+
+export interface CopilotDeviceStatusResponse {
+  status: 'ok' | 'wait' | 'error';
+  account_id?: string;
+  error_code?: string;
+  error_message?: string;
+  slow_down?: boolean;
+}
+
+export interface CopilotQuotaSnapshot {
+  entitlement: number;
+  remaining: number;
+  percent_remaining: number;
+  quota_id: string;
+  unlimited: boolean;
+}
+
+export interface CopilotQuotaSnapshots {
+  chat?: CopilotQuotaSnapshot;
+  completions?: CopilotQuotaSnapshot;
+  premium_interactions?: CopilotQuotaSnapshot;
+}
+
+export interface CopilotUsage {
+  credential_id: string;
+  login?: string;
+  quota_reset_date?: string;
+  quota_reset_date_utc?: string;
+  quota_snapshots?: CopilotQuotaSnapshots;
+  fetched_at: string;
 }
 
 export interface AuditEntry {

@@ -34,17 +34,16 @@ type CredentialRepository interface {
 
 // CredentialDecryptor decrypts credential profile data.
 type CredentialDecryptor interface {
-	Decrypt(cipher string) (string, error)
+	Decrypt(cipher, iv, tag string) (string, error)
 }
 
 // DecryptedCredential holds the decrypted credential data.
 type DecryptedCredential struct {
-	AccessToken  string    `json:"access_token"`
-	RefreshToken string    `json:"refresh_token"`
-	AccountID    string    `json:"account_id"`
-	Email        string    `json:"email"`
-	Expired      time.Time `json:"expired"`
-	Type         string    `json:"type"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	AccountID    string `json:"account_id"`
+	Email        string `json:"email"`
+	Type         string `json:"type"`
 }
 
 // PooledTokenFetcher implements TokenFetcher using the credential repository.
@@ -149,12 +148,12 @@ func (f *PooledTokenFetcher) GetNextTokenWithInfo(
 		return "", meta, fmt.Errorf("decrypt credential: %w", err)
 	}
 
-	// Check expiration
-	if time.Now().After(decrypted.Expired) {
+	// Check expiration from DB column (single source of truth)
+	if !selected.Expired.IsZero() && time.Now().After(selected.Expired) {
 		f.logger.Warn("selected credential is expired",
 			zap.String("profile_id", selected.ID),
 			zap.String("account_id", selected.AccountID),
-			zap.Time("expired_at", decrypted.Expired),
+			zap.Time("expired_at", selected.Expired),
 		)
 		// Still return it - the refresh worker should handle this
 		// The upstream will reject it and we'll fallback
@@ -226,7 +225,16 @@ func (f *PooledTokenFetcher) GetAvailableProviderTypes(ctx context.Context) ([]s
 
 // decryptProfile decrypts a credential profile and extracts the access token.
 func (f *PooledTokenFetcher) decryptProfile(profile domaincredential.Profile) (*DecryptedCredential, error) {
-	decrypted, err := f.decryptor.Decrypt(profile.EncryptedProfile)
+	iv := ""
+	if profile.EncryptedIV != nil {
+		iv = *profile.EncryptedIV
+	}
+	tag := ""
+	if profile.EncryptedTag != nil {
+		tag = *profile.EncryptedTag
+	}
+
+	decrypted, err := f.decryptor.Decrypt(profile.EncryptedProfile, iv, tag)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt: %w", err)
 	}

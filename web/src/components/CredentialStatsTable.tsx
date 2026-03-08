@@ -61,6 +61,7 @@ export function CredentialStatsTable({ data }: CredentialStatsTableProps) {
                 { key: 'credential_id', label: 'Credential ID' },
                 { key: 'requests', label: 'Requests' },
                 { key: 'tokens_in', label: 'Tokens In' },
+                { key: 'cached_tokens', label: 'Cached' },
                 { key: 'tokens_out', label: 'Tokens Out' },
                 { key: 'total_tokens', label: 'Total Tokens' },
                 { key: 'cost', label: 'Cost' },
@@ -98,6 +99,9 @@ export function CredentialStatsTable({ data }: CredentialStatsTableProps) {
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                   {formatNumber(credential.tokens_in)}
+                </td>
+                <td className="px-4 py-3 whitespace-nowrap text-sm text-amber-700">
+                  {formatNumber(credential.cached_tokens)}
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                   {formatNumber(credential.tokens_out)}

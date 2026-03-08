@@ -32,6 +32,10 @@ func (m *mockCompletionRepo) List(ctx context.Context) ([]domaincredential.Profi
 	return nil, nil
 }
 
+func (m *mockCompletionRepo) GetByID(ctx context.Context, id string) (*domaincredential.Profile, error) {
+	return nil, nil
+}
+
 func (m *mockCompletionRepo) Update(ctx context.Context, profile domaincredential.Profile) (domaincredential.Profile, error) {
 	return profile, nil
 }
@@ -71,16 +75,16 @@ func newMockCompletionEncryptor() *mockCompletionEncryptor {
 	}
 }
 
-func (m *mockCompletionEncryptor) Encrypt(plain string) (string, error) {
+func (m *mockCompletionEncryptor) Encrypt(plain string) (string, string, string, error) {
 	if m.encryptErr != nil {
-		return "", m.encryptErr
+		return "", "", "", m.encryptErr
 	}
 	cipher := "encrypted:" + plain
 	m.encrypted[plain] = cipher
-	return cipher, nil
+	return cipher, "iv", "tag", nil
 }
 
-func (m *mockCompletionEncryptor) Decrypt(cipher string) (string, error) {
+func (m *mockCompletionEncryptor) Decrypt(cipher, iv, tag string) (string, error) {
 	if m.decryptErr != nil {
 		return "", m.decryptErr
 	}
@@ -92,12 +96,16 @@ func (m *mockCompletionEncryptor) Decrypt(cipher string) (string, error) {
 	return "", errors.New("cipher not found")
 }
 
+func (m *mockCompletionEncryptor) ShouldEncrypt() bool {
+	return true
+}
+
 func TestCompletionService_CompleteOAuth_Success(t *testing.T) {
 	ctx := context.Background()
 	repo := &mockCompletionRepo{}
 	encryptor := newMockCompletionEncryptor()
 
-	service := NewCompletionService(repo, encryptor)
+	service := NewCompletionService(repo, encryptor, nil)
 	service.(*completionService).now = func() time.Time {
 		return time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	}
@@ -148,7 +156,11 @@ func TestCompletionService_CompleteOAuth_Success(t *testing.T) {
 	}
 
 	// Verify encrypted data can be "decrypted" and contains expected fields
-	decrypted, err := encryptor.Decrypt(upsertedProfile.EncryptedProfile)
+	decrypted, err := encryptor.Decrypt(
+		upsertedProfile.EncryptedProfile,
+		stringValue(upsertedProfile.EncryptedIV),
+		stringValue(upsertedProfile.EncryptedTag),
+	)
 	if err != nil {
 		t.Fatalf("failed to decrypt profile: %v", err)
 	}
@@ -172,12 +184,53 @@ func TestCompletionService_CompleteOAuth_Success(t *testing.T) {
 	}
 }
 
+func TestCompletionService_CompleteOAuth_RefreshesRegistryOnSuccess(t *testing.T) {
+	ctx := context.Background()
+	repo := &mockCompletionRepo{}
+	encryptor := newMockCompletionEncryptor()
+
+	var refreshCalled bool
+	var refreshedType string
+	var refreshedAccountID string
+	service := NewCompletionService(repo, encryptor, func(_ context.Context, profileType, accountID string) {
+		refreshCalled = true
+		refreshedType = profileType
+		refreshedAccountID = accountID
+	})
+	service.(*completionService).now = func() time.Time {
+		return time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	}
+
+	accountID := "test-account-123"
+	tokenPayload := domainoauth.TokenPayload{
+		AccessToken:  "access-token-abc",
+		RefreshToken: "refresh-token-xyz",
+		ExpiresAt:    time.Date(2025, 1, 2, 12, 0, 0, 0, time.UTC),
+		TokenType:    "Bearer",
+	}
+
+	_, err := service.CompleteOAuth(ctx, accountID, tokenPayload)
+	if err != nil {
+		t.Fatalf("CompleteOAuth failed: %v", err)
+	}
+
+	if !refreshCalled {
+		t.Fatal("expected registry refresher to be called")
+	}
+	if refreshedType != "codex" {
+		t.Fatalf("expected refreshed type codex, got %q", refreshedType)
+	}
+	if refreshedAccountID != accountID {
+		t.Fatalf("expected refreshed account id %q, got %q", accountID, refreshedAccountID)
+	}
+}
+
 func TestCompletionService_CompleteOAuth_ReauthUpdatesExisting(t *testing.T) {
 	ctx := context.Background()
 	repo := &mockCompletionRepo{}
 	encryptor := newMockCompletionEncryptor()
 
-	service := NewCompletionService(repo, encryptor)
+	service := NewCompletionService(repo, encryptor, nil)
 	service.(*completionService).now = func() time.Time {
 		return time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	}
@@ -231,7 +284,7 @@ func TestCompletionService_CompleteOAuth_EncryptionFailure(t *testing.T) {
 	encryptor := newMockCompletionEncryptor()
 	encryptor.encryptErr = errors.New("encryption failed")
 
-	service := NewCompletionService(repo, encryptor)
+	service := NewCompletionService(repo, encryptor, nil)
 	service.(*completionService).now = func() time.Time {
 		return time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	}
@@ -259,7 +312,7 @@ func TestCompletionService_CompleteOAuth_UpsertFailure(t *testing.T) {
 	repo.upsertErr = errors.New("database error")
 	encryptor := newMockCompletionEncryptor()
 
-	service := NewCompletionService(repo, encryptor)
+	service := NewCompletionService(repo, encryptor, nil)
 	service.(*completionService).now = func() time.Time {
 		return time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	}
@@ -286,7 +339,7 @@ func TestCompletionService_CompleteOAuth_TimestampsSet(t *testing.T) {
 	repo := &mockCompletionRepo{}
 	encryptor := newMockCompletionEncryptor()
 
-	service := NewCompletionService(repo, encryptor)
+	service := NewCompletionService(repo, encryptor, nil)
 	fixedNow := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)
 	service.(*completionService).now = func() time.Time {
 		return fixedNow
@@ -319,7 +372,7 @@ func TestCompletionService_CompleteOAuth_RejectsMissingAccessToken(t *testing.T)
 	repo := &mockCompletionRepo{}
 	encryptor := newMockCompletionEncryptor()
 
-	service := NewCompletionService(repo, encryptor)
+	service := NewCompletionService(repo, encryptor, nil)
 	service.(*completionService).now = func() time.Time {
 		return time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	}
@@ -345,7 +398,7 @@ func TestCompletionService_CompleteOAuth_RejectsMissingRefreshToken(t *testing.T
 	repo := &mockCompletionRepo{}
 	encryptor := newMockCompletionEncryptor()
 
-	service := NewCompletionService(repo, encryptor)
+	service := NewCompletionService(repo, encryptor, nil)
 	service.(*completionService).now = func() time.Time {
 		return time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	}
@@ -371,7 +424,7 @@ func TestCompletionService_CompleteOAuth_RejectsExpiredToken(t *testing.T) {
 	repo := &mockCompletionRepo{}
 	encryptor := newMockCompletionEncryptor()
 
-	service := NewCompletionService(repo, encryptor)
+	service := NewCompletionService(repo, encryptor, nil)
 	service.(*completionService).now = func() time.Time {
 		return time.Date(2025, 1, 2, 12, 0, 0, 0, time.UTC)
 	}

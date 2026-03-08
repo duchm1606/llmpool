@@ -5,14 +5,15 @@ import { OverviewCards } from '@/components/OverviewCards';
 import { ActivityHeatmap } from '@/components/ActivityHeatmap';
 import { UsageChart } from '@/components/UsageChart';
 import { ModelStatsTable } from '@/components/ModelStatsTable';
-import { CredentialStatsTable } from '@/components/CredentialStatsTable';
+import { CredentialManagementTable } from '@/components/CredentialManagementTable';
 import { AuditTrailTable } from '@/components/AuditTrailTable';
 import {
   OverviewStats,
   HeatmapDataPoint,
   TimeSeriesPoint,
   ModelStats,
-  CredentialStats,
+  CredentialProfile,
+  CopilotUsage,
   AuditResponse,
   AuditFilters,
 } from '@/types/api';
@@ -23,7 +24,8 @@ import {
   generateMockHeatmap,
   generateMockTimeSeries,
   generateMockModelStats,
-  generateMockCredentialStats,
+  generateMockCredentialProfiles,
+  generateMockCopilotUsages,
   generateMockAuditTrail,
 } from '@/lib/mock-data';
 
@@ -35,7 +37,8 @@ export default function DashboardPage() {
   const [heatmap, setHeatmap] = useState<HeatmapDataPoint[]>([]);
   const [timeSeries, setTimeSeries] = useState<TimeSeriesPoint[]>([]);
   const [modelStats, setModelStats] = useState<ModelStats[]>([]);
-  const [credentialStats, setCredentialStats] = useState<CredentialStats[]>([]);
+  const [credentialProfiles, setCredentialProfiles] = useState<CredentialProfile[]>([]);
+  const [copilotUsages, setCopilotUsages] = useState<CopilotUsage[]>([]);
   const [auditData, setAuditData] = useState<AuditResponse | null>(null);
 
   const [granularity, setGranularity] = useState<'hourly' | 'daily'>('daily');
@@ -56,17 +59,27 @@ export default function DashboardPage() {
         setHeatmap(generateMockHeatmap(365));
         setTimeSeries(generateMockTimeSeries(granularity, granularity === 'hourly' ? 7 : 30));
         setModelStats(generateMockModelStats());
-        setCredentialStats(generateMockCredentialStats());
+        setCredentialProfiles(generateMockCredentialProfiles());
+        setCopilotUsages(generateMockCopilotUsages());
         setAuditData(generateMockAuditTrail(auditFilters));
       } else {
         // Fetch from API
-        const [overviewData, heatmapData, timeSeriesData, modelStatsData, credentialStatsData, auditTrailData] =
+        const [
+          overviewData,
+          heatmapData,
+          timeSeriesData,
+          modelStatsData,
+          credentialProfilesData,
+          copilotUsagesData,
+          auditTrailData,
+        ] =
           await Promise.all([
             apiClient.getOverview('24h'),
             apiClient.getHeatmap(365),
             apiClient.getTimeSeries(granularity, granularity === 'hourly' ? 7 : 30),
             apiClient.getModelStats('24h'),
-            apiClient.getCredentialStats('24h'),
+            apiClient.getCredentialProfiles(),
+            apiClient.getCopilotUsages(),
             apiClient.getAuditTrail(auditFilters),
           ]);
 
@@ -74,7 +87,8 @@ export default function DashboardPage() {
         setHeatmap(heatmapData);
         setTimeSeries(timeSeriesData);
         setModelStats(modelStatsData);
-        setCredentialStats(credentialStatsData);
+        setCredentialProfiles(credentialProfilesData);
+        setCopilotUsages(copilotUsagesData);
         setAuditData(auditTrailData);
       }
     } catch (err) {
@@ -167,8 +181,13 @@ export default function DashboardPage() {
         {/* Model Stats Table */}
         {modelStats.length > 0 && <ModelStatsTable data={modelStats} />}
 
-        {/* Credential Account Stats Table */}
-        {credentialStats.length > 0 && <CredentialStatsTable data={credentialStats} />}
+        {/* Credential Management */}
+        <CredentialManagementTable
+          profiles={credentialProfiles}
+          usages={copilotUsages}
+          loading={loading}
+          onDataRefresh={fetchData}
+        />
 
         {/* Audit Trail Table */}
         {auditData && (

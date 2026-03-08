@@ -16,17 +16,19 @@ import (
 // as encrypted credential profiles. It uses upsert semantics to handle reauth
 // scenarios without creating duplicate profiles.
 type completionService struct {
-	repo      Repository
-	encryptor Encryptor
-	now       func() time.Time
+	repo              Repository
+	encryptor         Encryptor
+	now               func() time.Time
+	registryRefresher RegistryRefresher
 }
 
 // NewCompletionService creates a new OAuth completion service
-func NewCompletionService(repo Repository, encryptor Encryptor) OAuthCompletionService {
+func NewCompletionService(repo Repository, encryptor Encryptor, registryRefresher RegistryRefresher) OAuthCompletionService {
 	return &completionService{
-		repo:      repo,
-		encryptor: encryptor,
-		now:       time.Now,
+		repo:              repo,
+		encryptor:         encryptor,
+		now:               time.Now,
+		registryRefresher: registryRefresher,
 	}
 }
 
@@ -62,7 +64,7 @@ func (s *completionService) CompleteOAuth(
 	}
 
 	// Encrypt the profile data
-	encProfile, err := s.encryptor.Encrypt(string(rawProfile))
+	encProfile, iv, tag, err := s.encryptor.Encrypt(string(rawProfile))
 	if err != nil {
 		return domaincredential.Profile{}, fmt.Errorf("encrypt profile: %w", err)
 	}
@@ -75,6 +77,8 @@ func (s *completionService) CompleteOAuth(
 		Enabled:          true,
 		Email:            strings.TrimSpace(tokenPayload.Email),
 		EncryptedProfile: encProfile,
+		EncryptedIV:      stringPtrOrNil(iv),
+		EncryptedTag:     stringPtrOrNil(tag),
 		Expired:          tokenPayload.ExpiresAt,
 		LastRefreshAt:    now,
 	}
@@ -84,6 +88,10 @@ func (s *completionService) CompleteOAuth(
 	savedProfile, err := s.repo.UpsertByTypeAccount(ctx, profile)
 	if err != nil {
 		return domaincredential.Profile{}, fmt.Errorf("upsert credential profile: %w", err)
+	}
+
+	if s.registryRefresher != nil {
+		s.registryRefresher(ctx, savedProfile.Type, savedProfile.AccountID)
 	}
 
 	return savedProfile, nil

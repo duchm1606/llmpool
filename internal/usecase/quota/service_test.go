@@ -51,7 +51,7 @@ type mockEncryptor struct {
 	decryptErr error
 }
 
-func (m *mockEncryptor) Decrypt(cipher string) (string, error) {
+func (m *mockEncryptor) Decrypt(cipher, iv, tag string) (string, error) {
 	if m.decryptErr != nil {
 		return "", m.decryptErr
 	}

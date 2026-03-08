@@ -10,8 +10,13 @@ import (
 
 type testEncryptor struct{}
 
-func (t testEncryptor) Encrypt(plain string) (string, error)  { return "enc:" + plain, nil }
-func (t testEncryptor) Decrypt(cipher string) (string, error) { return cipher, nil }
+func (t testEncryptor) Encrypt(plain string) (string, string, string, error) {
+	return "enc:" + plain, "", "", nil
+}
+
+func (t testEncryptor) Decrypt(cipher, iv, tag string) (string, error) { return cipher, nil }
+
+func (t testEncryptor) ShouldEncrypt() bool { return false }
 
 type testRepo struct{ saved []domaincredential.Profile }
 
@@ -20,6 +25,9 @@ func (r *testRepo) Save(_ context.Context, p domaincredential.Profile) (domaincr
 	return p, nil
 }
 func (r *testRepo) List(_ context.Context) ([]domaincredential.Profile, error) { return nil, nil }
+func (r *testRepo) GetByID(_ context.Context, _ string) (*domaincredential.Profile, error) {
+	return nil, nil
+}
 func (r *testRepo) Update(_ context.Context, p domaincredential.Profile) (domaincredential.Profile, error) {
 	return p, nil
 }
@@ -42,7 +50,7 @@ func (r *testRepo) RandomSample(_ context.Context, sampleSize int, seed int64) (
 
 func TestImport_SavesOnlyEncryptedProfileBlob(t *testing.T) {
 	repo := &testRepo{}
-	svc := NewImportService(repo, testEncryptor{})
+	svc := NewImportService(repo, testEncryptor{}, nil)
 
 	rawPayload := []byte(`{"type":"openai","access_token":"a1","refresh_token":"r1","email":"user@example.com","account_id":"acc-1","enabled":true,"expired":"2027-01-01T00:00:00Z","last_refresh":"2027-01-01T00:00:00Z"}`)
 	var payload CredentialProfile
@@ -78,7 +86,7 @@ func TestImport_SavesOnlyEncryptedProfileBlob(t *testing.T) {
 
 func TestImport_UpsertsDuplicateTypeAccount(t *testing.T) {
 	repo := &testRepo{}
-	svc := NewImportService(repo, testEncryptor{})
+	svc := NewImportService(repo, testEncryptor{}, nil)
 
 	rawPayload := []byte(`{"type":"openai","access_token":"a1","refresh_token":"r1","email":"user@example.com","account_id":"acc-1","enabled":true,"expired":"2027-01-01T00:00:00Z","last_refresh":"2027-01-01T00:00:00Z"}`)
 	var payload CredentialProfile
@@ -102,5 +110,38 @@ func TestImport_UpsertsDuplicateTypeAccount(t *testing.T) {
 	}
 	if repo.saved[0].Type != repo.saved[1].Type || repo.saved[0].AccountID != repo.saved[1].AccountID {
 		t.Fatalf("expected same dedupe key for upserts")
+	}
+}
+
+func TestImport_RefreshesRegistryOnSuccess(t *testing.T) {
+	repo := &testRepo{}
+	var refreshCalled bool
+	var refreshedType string
+	var refreshedAccountID string
+	svc := NewImportService(repo, testEncryptor{}, func(_ context.Context, profileType, accountID string) {
+		refreshCalled = true
+		refreshedType = profileType
+		refreshedAccountID = accountID
+	})
+
+	rawPayload := []byte(`{"type":"openai","access_token":"a1","refresh_token":"r1","email":"user@example.com","account_id":"acc-1","enabled":true,"expired":"2027-01-01T00:00:00Z","last_refresh":"2027-01-01T00:00:00Z"}`)
+	var payload CredentialProfile
+	if err := json.Unmarshal(rawPayload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+
+	_, err := svc.Import(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("import failed: %v", err)
+	}
+
+	if !refreshCalled {
+		t.Fatal("expected registry refresher to be called")
+	}
+	if refreshedType != "openai" {
+		t.Fatalf("expected refreshed type openai, got %q", refreshedType)
+	}
+	if refreshedAccountID != "acc-1" {
+		t.Fatalf("expected refreshed account id acc-1, got %q", refreshedAccountID)
 	}
 }

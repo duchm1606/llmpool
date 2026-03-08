@@ -32,6 +32,8 @@ INSERT INTO credential_profiles (
     expired,
     last_refresh_at,
     encrypted_profile,
+    encrypted_iv,
+    encrypted_tag,
     created_at,
     modified_at
 )
@@ -44,6 +46,8 @@ VALUES (
     $6,
     $7,
     $8,
+    $9,
+    $10,
     NOW(),
     NOW()
 )
@@ -56,6 +60,8 @@ RETURNING
     expired,
     last_refresh_at,
     encrypted_profile,
+    encrypted_iv,
+    encrypted_tag,
     created_at,
     modified_at
 `
@@ -69,9 +75,26 @@ type CreateCredentialProfileParams struct {
 	Expired          pgtype.Timestamptz `json:"expired"`
 	LastRefreshAt    pgtype.Timestamptz `json:"last_refresh_at"`
 	EncryptedProfile string             `json:"encrypted_profile"`
+	EncryptedIv      pgtype.Text        `json:"encrypted_iv"`
+	EncryptedTag     pgtype.Text        `json:"encrypted_tag"`
 }
 
-func (q *Queries) CreateCredentialProfile(ctx context.Context, arg CreateCredentialProfileParams) (CredentialProfile, error) {
+type CreateCredentialProfileRow struct {
+	ID               string             `json:"id"`
+	Type             string             `json:"type"`
+	AccountID        string             `json:"account_id"`
+	Enabled          bool               `json:"enabled"`
+	Email            string             `json:"email"`
+	Expired          pgtype.Timestamptz `json:"expired"`
+	LastRefreshAt    pgtype.Timestamptz `json:"last_refresh_at"`
+	EncryptedProfile string             `json:"encrypted_profile"`
+	EncryptedIv      pgtype.Text        `json:"encrypted_iv"`
+	EncryptedTag     pgtype.Text        `json:"encrypted_tag"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ModifiedAt       pgtype.Timestamptz `json:"modified_at"`
+}
+
+func (q *Queries) CreateCredentialProfile(ctx context.Context, arg CreateCredentialProfileParams) (CreateCredentialProfileRow, error) {
 	row := q.db.QueryRow(ctx, createCredentialProfile,
 		arg.ID,
 		arg.Type,
@@ -81,8 +104,10 @@ func (q *Queries) CreateCredentialProfile(ctx context.Context, arg CreateCredent
 		arg.Expired,
 		arg.LastRefreshAt,
 		arg.EncryptedProfile,
+		arg.EncryptedIv,
+		arg.EncryptedTag,
 	)
-	var i CredentialProfile
+	var i CreateCredentialProfileRow
 	err := row.Scan(
 		&i.ID,
 		&i.Type,
@@ -92,6 +117,61 @@ func (q *Queries) CreateCredentialProfile(ctx context.Context, arg CreateCredent
 		&i.Expired,
 		&i.LastRefreshAt,
 		&i.EncryptedProfile,
+		&i.EncryptedIv,
+		&i.EncryptedTag,
+		&i.CreatedAt,
+		&i.ModifiedAt,
+	)
+	return i, err
+}
+
+const getCredentialProfileByID = `-- name: GetCredentialProfileByID :one
+SELECT
+    id,
+    type,
+    account_id,
+    enabled,
+    email,
+    expired,
+    last_refresh_at,
+    encrypted_profile,
+    encrypted_iv,
+    encrypted_tag,
+    created_at,
+    modified_at
+FROM credential_profiles
+WHERE id = $1
+`
+
+type GetCredentialProfileByIDRow struct {
+	ID               string             `json:"id"`
+	Type             string             `json:"type"`
+	AccountID        string             `json:"account_id"`
+	Enabled          bool               `json:"enabled"`
+	Email            string             `json:"email"`
+	Expired          pgtype.Timestamptz `json:"expired"`
+	LastRefreshAt    pgtype.Timestamptz `json:"last_refresh_at"`
+	EncryptedProfile string             `json:"encrypted_profile"`
+	EncryptedIv      pgtype.Text        `json:"encrypted_iv"`
+	EncryptedTag     pgtype.Text        `json:"encrypted_tag"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ModifiedAt       pgtype.Timestamptz `json:"modified_at"`
+}
+
+func (q *Queries) GetCredentialProfileByID(ctx context.Context, id string) (GetCredentialProfileByIDRow, error) {
+	row := q.db.QueryRow(ctx, getCredentialProfileByID, id)
+	var i GetCredentialProfileByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.Type,
+		&i.AccountID,
+		&i.Enabled,
+		&i.Email,
+		&i.Expired,
+		&i.LastRefreshAt,
+		&i.EncryptedProfile,
+		&i.EncryptedIv,
+		&i.EncryptedTag,
 		&i.CreatedAt,
 		&i.ModifiedAt,
 	)
@@ -108,21 +188,38 @@ SELECT
     expired,
     last_refresh_at,
     encrypted_profile,
+    encrypted_iv,
+    encrypted_tag,
     created_at,
     modified_at
 FROM credential_profiles
 ORDER BY modified_at DESC
 `
 
-func (q *Queries) ListCredentialProfiles(ctx context.Context) ([]CredentialProfile, error) {
+type ListCredentialProfilesRow struct {
+	ID               string             `json:"id"`
+	Type             string             `json:"type"`
+	AccountID        string             `json:"account_id"`
+	Enabled          bool               `json:"enabled"`
+	Email            string             `json:"email"`
+	Expired          pgtype.Timestamptz `json:"expired"`
+	LastRefreshAt    pgtype.Timestamptz `json:"last_refresh_at"`
+	EncryptedProfile string             `json:"encrypted_profile"`
+	EncryptedIv      pgtype.Text        `json:"encrypted_iv"`
+	EncryptedTag     pgtype.Text        `json:"encrypted_tag"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ModifiedAt       pgtype.Timestamptz `json:"modified_at"`
+}
+
+func (q *Queries) ListCredentialProfiles(ctx context.Context) ([]ListCredentialProfilesRow, error) {
 	rows, err := q.db.Query(ctx, listCredentialProfiles)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []CredentialProfile{}
+	items := []ListCredentialProfilesRow{}
 	for rows.Next() {
-		var i CredentialProfile
+		var i ListCredentialProfilesRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Type,
@@ -132,6 +229,8 @@ func (q *Queries) ListCredentialProfiles(ctx context.Context) ([]CredentialProfi
 			&i.Expired,
 			&i.LastRefreshAt,
 			&i.EncryptedProfile,
+			&i.EncryptedIv,
+			&i.EncryptedTag,
 			&i.CreatedAt,
 			&i.ModifiedAt,
 		); err != nil {
@@ -155,6 +254,8 @@ SELECT
     expired,
     last_refresh_at,
     encrypted_profile,
+    encrypted_iv,
+    encrypted_tag,
     created_at,
     modified_at
 FROM credential_profiles
@@ -162,15 +263,30 @@ WHERE enabled = true
 ORDER BY modified_at DESC
 `
 
-func (q *Queries) ListEnabledCredentialProfiles(ctx context.Context) ([]CredentialProfile, error) {
+type ListEnabledCredentialProfilesRow struct {
+	ID               string             `json:"id"`
+	Type             string             `json:"type"`
+	AccountID        string             `json:"account_id"`
+	Enabled          bool               `json:"enabled"`
+	Email            string             `json:"email"`
+	Expired          pgtype.Timestamptz `json:"expired"`
+	LastRefreshAt    pgtype.Timestamptz `json:"last_refresh_at"`
+	EncryptedProfile string             `json:"encrypted_profile"`
+	EncryptedIv      pgtype.Text        `json:"encrypted_iv"`
+	EncryptedTag     pgtype.Text        `json:"encrypted_tag"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ModifiedAt       pgtype.Timestamptz `json:"modified_at"`
+}
+
+func (q *Queries) ListEnabledCredentialProfiles(ctx context.Context) ([]ListEnabledCredentialProfilesRow, error) {
 	rows, err := q.db.Query(ctx, listEnabledCredentialProfiles)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []CredentialProfile{}
+	items := []ListEnabledCredentialProfilesRow{}
 	for rows.Next() {
-		var i CredentialProfile
+		var i ListEnabledCredentialProfilesRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Type,
@@ -180,6 +296,8 @@ func (q *Queries) ListEnabledCredentialProfiles(ctx context.Context) ([]Credenti
 			&i.Expired,
 			&i.LastRefreshAt,
 			&i.EncryptedProfile,
+			&i.EncryptedIv,
+			&i.EncryptedTag,
 			&i.CreatedAt,
 			&i.ModifiedAt,
 		); err != nil {
@@ -203,6 +321,8 @@ SELECT
     expired,
     last_refresh_at,
     encrypted_profile,
+    encrypted_iv,
+    encrypted_tag,
     created_at,
     modified_at
 FROM credential_profiles
@@ -216,17 +336,32 @@ type RandomSampleEnabledCredentialProfilesParams struct {
 	Column2 string `json:"column_2"`
 }
 
+type RandomSampleEnabledCredentialProfilesRow struct {
+	ID               string             `json:"id"`
+	Type             string             `json:"type"`
+	AccountID        string             `json:"account_id"`
+	Enabled          bool               `json:"enabled"`
+	Email            string             `json:"email"`
+	Expired          pgtype.Timestamptz `json:"expired"`
+	LastRefreshAt    pgtype.Timestamptz `json:"last_refresh_at"`
+	EncryptedProfile string             `json:"encrypted_profile"`
+	EncryptedIv      pgtype.Text        `json:"encrypted_iv"`
+	EncryptedTag     pgtype.Text        `json:"encrypted_tag"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ModifiedAt       pgtype.Timestamptz `json:"modified_at"`
+}
+
 // Deterministic random sampling using hash ordering on (id, seed).
 // The seed parameter allows reproducible ordering across calls.
-func (q *Queries) RandomSampleEnabledCredentialProfiles(ctx context.Context, arg RandomSampleEnabledCredentialProfilesParams) ([]CredentialProfile, error) {
+func (q *Queries) RandomSampleEnabledCredentialProfiles(ctx context.Context, arg RandomSampleEnabledCredentialProfilesParams) ([]RandomSampleEnabledCredentialProfilesRow, error) {
 	rows, err := q.db.Query(ctx, randomSampleEnabledCredentialProfiles, arg.Limit, arg.Column2)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []CredentialProfile{}
+	items := []RandomSampleEnabledCredentialProfilesRow{}
 	for rows.Next() {
-		var i CredentialProfile
+		var i RandomSampleEnabledCredentialProfilesRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Type,
@@ -236,6 +371,8 @@ func (q *Queries) RandomSampleEnabledCredentialProfiles(ctx context.Context, arg
 			&i.Expired,
 			&i.LastRefreshAt,
 			&i.EncryptedProfile,
+			&i.EncryptedIv,
+			&i.EncryptedTag,
 			&i.CreatedAt,
 			&i.ModifiedAt,
 		); err != nil {
@@ -259,6 +396,8 @@ SET
     expired = $6,
     last_refresh_at = $7,
     encrypted_profile = $8,
+    encrypted_iv = $9,
+    encrypted_tag = $10,
     modified_at = NOW()
 WHERE id = $1
 RETURNING
@@ -270,6 +409,8 @@ RETURNING
     expired,
     last_refresh_at,
     encrypted_profile,
+    encrypted_iv,
+    encrypted_tag,
     created_at,
     modified_at
 `
@@ -283,9 +424,26 @@ type UpdateCredentialProfileParams struct {
 	Expired          pgtype.Timestamptz `json:"expired"`
 	LastRefreshAt    pgtype.Timestamptz `json:"last_refresh_at"`
 	EncryptedProfile string             `json:"encrypted_profile"`
+	EncryptedIv      pgtype.Text        `json:"encrypted_iv"`
+	EncryptedTag     pgtype.Text        `json:"encrypted_tag"`
 }
 
-func (q *Queries) UpdateCredentialProfile(ctx context.Context, arg UpdateCredentialProfileParams) (CredentialProfile, error) {
+type UpdateCredentialProfileRow struct {
+	ID               string             `json:"id"`
+	Type             string             `json:"type"`
+	AccountID        string             `json:"account_id"`
+	Enabled          bool               `json:"enabled"`
+	Email            string             `json:"email"`
+	Expired          pgtype.Timestamptz `json:"expired"`
+	LastRefreshAt    pgtype.Timestamptz `json:"last_refresh_at"`
+	EncryptedProfile string             `json:"encrypted_profile"`
+	EncryptedIv      pgtype.Text        `json:"encrypted_iv"`
+	EncryptedTag     pgtype.Text        `json:"encrypted_tag"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ModifiedAt       pgtype.Timestamptz `json:"modified_at"`
+}
+
+func (q *Queries) UpdateCredentialProfile(ctx context.Context, arg UpdateCredentialProfileParams) (UpdateCredentialProfileRow, error) {
 	row := q.db.QueryRow(ctx, updateCredentialProfile,
 		arg.ID,
 		arg.Type,
@@ -295,8 +453,10 @@ func (q *Queries) UpdateCredentialProfile(ctx context.Context, arg UpdateCredent
 		arg.Expired,
 		arg.LastRefreshAt,
 		arg.EncryptedProfile,
+		arg.EncryptedIv,
+		arg.EncryptedTag,
 	)
-	var i CredentialProfile
+	var i UpdateCredentialProfileRow
 	err := row.Scan(
 		&i.ID,
 		&i.Type,
@@ -306,6 +466,8 @@ func (q *Queries) UpdateCredentialProfile(ctx context.Context, arg UpdateCredent
 		&i.Expired,
 		&i.LastRefreshAt,
 		&i.EncryptedProfile,
+		&i.EncryptedIv,
+		&i.EncryptedTag,
 		&i.CreatedAt,
 		&i.ModifiedAt,
 	)
@@ -322,6 +484,8 @@ INSERT INTO credential_profiles (
     expired,
     last_refresh_at,
     encrypted_profile,
+    encrypted_iv,
+    encrypted_tag,
     created_at,
     modified_at
 ) VALUES (
@@ -333,6 +497,8 @@ INSERT INTO credential_profiles (
     $6,
     $7,
     $8,
+    $9,
+    $10,
     NOW(),
     NOW()
 )
@@ -343,6 +509,8 @@ DO UPDATE SET
     expired = EXCLUDED.expired,
     last_refresh_at = EXCLUDED.last_refresh_at,
     encrypted_profile = EXCLUDED.encrypted_profile,
+    encrypted_iv = EXCLUDED.encrypted_iv,
+    encrypted_tag = EXCLUDED.encrypted_tag,
     modified_at = NOW()
 RETURNING
     id,
@@ -353,6 +521,8 @@ RETURNING
     expired,
     last_refresh_at,
     encrypted_profile,
+    encrypted_iv,
+    encrypted_tag,
     created_at,
     modified_at
 `
@@ -366,9 +536,26 @@ type UpsertCredentialProfileByTypeAccountParams struct {
 	Expired          pgtype.Timestamptz `json:"expired"`
 	LastRefreshAt    pgtype.Timestamptz `json:"last_refresh_at"`
 	EncryptedProfile string             `json:"encrypted_profile"`
+	EncryptedIv      pgtype.Text        `json:"encrypted_iv"`
+	EncryptedTag     pgtype.Text        `json:"encrypted_tag"`
 }
 
-func (q *Queries) UpsertCredentialProfileByTypeAccount(ctx context.Context, arg UpsertCredentialProfileByTypeAccountParams) (CredentialProfile, error) {
+type UpsertCredentialProfileByTypeAccountRow struct {
+	ID               string             `json:"id"`
+	Type             string             `json:"type"`
+	AccountID        string             `json:"account_id"`
+	Enabled          bool               `json:"enabled"`
+	Email            string             `json:"email"`
+	Expired          pgtype.Timestamptz `json:"expired"`
+	LastRefreshAt    pgtype.Timestamptz `json:"last_refresh_at"`
+	EncryptedProfile string             `json:"encrypted_profile"`
+	EncryptedIv      pgtype.Text        `json:"encrypted_iv"`
+	EncryptedTag     pgtype.Text        `json:"encrypted_tag"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ModifiedAt       pgtype.Timestamptz `json:"modified_at"`
+}
+
+func (q *Queries) UpsertCredentialProfileByTypeAccount(ctx context.Context, arg UpsertCredentialProfileByTypeAccountParams) (UpsertCredentialProfileByTypeAccountRow, error) {
 	row := q.db.QueryRow(ctx, upsertCredentialProfileByTypeAccount,
 		arg.ID,
 		arg.Type,
@@ -378,8 +565,10 @@ func (q *Queries) UpsertCredentialProfileByTypeAccount(ctx context.Context, arg 
 		arg.Expired,
 		arg.LastRefreshAt,
 		arg.EncryptedProfile,
+		arg.EncryptedIv,
+		arg.EncryptedTag,
 	)
-	var i CredentialProfile
+	var i UpsertCredentialProfileByTypeAccountRow
 	err := row.Scan(
 		&i.ID,
 		&i.Type,
@@ -389,6 +578,8 @@ func (q *Queries) UpsertCredentialProfileByTypeAccount(ctx context.Context, arg 
 		&i.Expired,
 		&i.LastRefreshAt,
 		&i.EncryptedProfile,
+		&i.EncryptedIv,
+		&i.EncryptedTag,
 		&i.CreatedAt,
 		&i.ModifiedAt,
 	)

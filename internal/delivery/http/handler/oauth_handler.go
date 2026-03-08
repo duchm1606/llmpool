@@ -410,6 +410,7 @@ func (h *OAuthHandler) StartDeviceFlow(c *gin.Context) {
 // GetDeviceStatus handles device flow status polling: GET /v1/internal/oauth/codex-device-status
 func (h *OAuthHandler) GetDeviceStatus(c *gin.Context) {
 	ctx := c.Request.Context()
+	requestID := middleware.GetRequestID(c)
 	deviceCode := c.Query("device_code")
 
 	if deviceCode == "" {
@@ -451,6 +452,10 @@ func (h *OAuthHandler) GetDeviceStatus(c *gin.Context) {
 	// Mark session as complete
 	accountID := strings.TrimSpace(tokenPayload.AccountID)
 	if accountID == "" {
+		oauthLog.Error("codex device poll missing account identity",
+			zap.String("request_id", requestID),
+			zap.String("device_code", deviceCode),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "missing account identifier",
@@ -458,7 +463,28 @@ func (h *OAuthHandler) GetDeviceStatus(c *gin.Context) {
 		return
 	}
 
-	if err := h.sessionStore.MarkComplete(ctx, deviceCode, accountID); err != nil {
+	newProfile, err := h.completionService.CompleteOAuth(ctx, accountID, tokenPayload)
+	if err != nil {
+		oauthLog.Error("codex oauth completion failed",
+			zap.String("request_id", requestID),
+			zap.String("device_code", deviceCode),
+			zap.String("account_id", accountID),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "failed to persist credentials",
+		})
+		return
+	}
+
+	if err := h.sessionStore.MarkComplete(ctx, deviceCode, newProfile.AccountID); err != nil {
+		oauthLog.Error("codex session mark complete failed",
+			zap.String("request_id", requestID),
+			zap.String("device_code", deviceCode),
+			zap.String("account_id", newProfile.AccountID),
+			zap.Error(err),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "failed to complete session",
@@ -466,9 +492,15 @@ func (h *OAuthHandler) GetDeviceStatus(c *gin.Context) {
 		return
 	}
 
+	oauthLog.Info("codex device flow completed",
+		zap.String("request_id", requestID),
+		zap.String("device_code", deviceCode),
+		zap.String("account_id", newProfile.AccountID),
+	)
+
 	// Return success response
 	c.JSON(http.StatusOK, gin.H{
 		"status":     "ok",
-		"account_id": accountID,
+		"account_id": newProfile.AccountID,
 	})
 }

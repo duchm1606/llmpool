@@ -245,7 +245,8 @@ func TestCodexDeviceFlowIntegration(t *testing.T) {
 	err = json.Unmarshal(w.Body.Bytes(), &pollResp)
 	require.NoError(t, err)
 	assert.Equal(t, "ok", pollResp["status"])
-	assert.Equal(t, "integration-device-account-from-provider", pollResp["account_id"])
+	assert.Equal(t, "integration-device-account", pollResp["account_id"])
+	assert.Equal(t, 1, completion.callCount)
 }
 
 // TestCompatibilityAliasContracts tests v0/management compatibility routes

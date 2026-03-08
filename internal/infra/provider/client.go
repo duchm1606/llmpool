@@ -1216,15 +1216,33 @@ func parseCodexCompactResponse(raw []byte, fallbackModel string) (*domaincomplet
 	var usage *domaincompletion.Usage
 	if usageMap, ok := responseObj["usage"].(map[string]any); ok {
 		prompt := int(mapInt64(usageMap, "input_tokens"))
+		if prompt == 0 {
+			prompt = int(mapInt64(usageMap, "prompt_tokens"))
+		}
 		completion := int(mapInt64(usageMap, "output_tokens"))
+		if completion == 0 {
+			completion = int(mapInt64(usageMap, "completion_tokens"))
+		}
 		total := int(mapInt64(usageMap, "total_tokens"))
 		if total == 0 {
 			total = prompt + completion
+		}
+		cached := 0
+		if details, ok := usageMap["input_tokens_details"].(map[string]any); ok {
+			cached = int(mapInt64(details, "cached_tokens"))
+		}
+		if cached == 0 {
+			if details, ok := usageMap["prompt_tokens_details"].(map[string]any); ok {
+				cached = int(mapInt64(details, "cached_tokens"))
+			}
 		}
 		usage = &domaincompletion.Usage{
 			PromptTokens:     prompt,
 			CompletionTokens: completion,
 			TotalTokens:      total,
+			PromptTokensDetails: &domaincompletion.PromptTokensDetails{
+				CachedTokens: cached,
+			},
 		}
 	}
 
