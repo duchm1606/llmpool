@@ -856,8 +856,6 @@ func (s *CopilotToAnthropicStreamState) closeThinkingBlockIfOpen() []string {
 	}
 
 	events := make([]string, 0)
-	// Emit empty signature_delta before closing (for completeness)
-	events = append(events, s.formatSignatureDelta(s.ThinkingBlockIndex, ""))
 	events = append(events, s.formatContentBlockStop(s.ThinkingBlockIndex))
 	s.ThinkingBlockOpen = false
 

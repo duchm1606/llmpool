@@ -204,3 +204,42 @@ func TestSSEDataHelper(t *testing.T) {
 		t.Fatalf("unexpected data extraction: %s", fmt.Sprintf("%q", got))
 	}
 }
+
+func TestConvertChatCompletionEventToAnthropic_CloseThinkingWithoutEmptySignatureDelta(t *testing.T) {
+	s := NewCopilotToAnthropicStreamState("gemini-3.1-pro-preview")
+
+	thinkingChunk := mustJSON(t, map[string]any{
+		"id":      "chatcmpl_think_1",
+		"created": float64(1),
+		"model":   "gemini-3.1-pro-preview",
+		"choices": []any{map[string]any{
+			"index": float64(0),
+			"delta": map[string]any{
+				"reasoning_text": "internal reasoning",
+			},
+		}},
+	})
+
+	contentChunk := mustJSON(t, map[string]any{
+		"id":      "chatcmpl_think_1",
+		"created": float64(1),
+		"model":   "gemini-3.1-pro-preview",
+		"choices": []any{map[string]any{
+			"index": float64(0),
+			"delta": map[string]any{
+				"content": "hello",
+			},
+		}},
+	})
+
+	_ = s.ConvertChatCompletionEventToAnthropic(thinkingChunk)
+	events := s.ConvertChatCompletionEventToAnthropic(contentChunk)
+
+	joined := strings.Join(events, "")
+	if strings.Contains(joined, `"type":"signature_delta"`) {
+		t.Fatalf("unexpected signature_delta when closing thinking block without signature: %s", joined)
+	}
+	if !strings.Contains(joined, "event: content_block_stop") {
+		t.Fatalf("expected thinking block to close with content_block_stop, got: %s", joined)
+	}
+}
