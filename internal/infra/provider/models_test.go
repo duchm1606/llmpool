@@ -329,9 +329,11 @@ func TestGetCopilotModelID(t *testing.T) {
 		// Gemini models - real IDs pass through
 		{"gemini-2.5-pro", "gemini-2.5-pro"},
 		{"gemini-3-pro", "gemini-3-pro"},
+		{"gemini-3.1-pro-preview", "gemini-3.1-pro-preview"},
 
 		// Gemini preview aliases
 		{"gemini-3-pro-preview", "gemini-3-pro"},
+		{"gemini-3.1-pro", "gemini-3.1-pro-preview"},
 		{"gemini-3-flash-preview", "gemini-3-flash"},
 
 		// Unknown models should pass through unchanged
@@ -358,6 +360,7 @@ func TestCopilotModelSupportIncludesGPT5Codex(t *testing.T) {
 		"gpt-5",
 		"gpt-5-mini",
 		"gpt-5.3-codex",
+		"gpt-5.4",
 		"gpt-5-codex",
 	}
 
@@ -446,6 +449,7 @@ func TestIsCopilotModelSupported(t *testing.T) {
 		{"gpt-5-codex", "gpt-5-codex", false},
 		{"gpt-5.3-codex", "gpt-5.3-codex", false}, // Real model - passes through unchanged
 		{"gpt-5.2-codex", "gpt-5.2-codex", false}, // Real model - passes through unchanged
+		{"gemini-3.1-pro", "gemini-3.1-pro-preview", false},
 		{"claude-sonnet-4.5", "claude-sonnet-4.5", false},
 
 		// Alias transformations
@@ -555,6 +559,7 @@ func TestCopilotAliasesOnly_NoFalseRewrites(t *testing.T) {
 		"claude-3-haiku",
 		"gemini-2.5-pro",
 		"gemini-3-pro",
+		"gemini-3.1-pro-preview",
 		"grok-code-fast-1",
 	}
 

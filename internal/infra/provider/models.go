@@ -58,6 +58,7 @@ var ProviderModels = map[string][]string{
 		"gpt-5.2-codex",
 		"gpt-5.3-codex",
 		"gpt-5.3-codex-spark",
+		"gpt-5.4",
 		// O-series reasoning models
 		"o1",
 		"o1-mini",
@@ -78,6 +79,7 @@ var ProviderModels = map[string][]string{
 		// Gemini models via Copilot
 		"gemini-2.5-pro",
 		"gemini-3-pro",
+		"gemini-3.1-pro-preview",
 		// Other models
 		"grok-code-fast-1",
 	},
@@ -151,6 +153,7 @@ var CopilotModelAliases = map[string]string{
 
 	// Gemini preview aliases
 	"gemini-3-pro-preview":   "gemini-3-pro",
+	"gemini-3.1-pro":         "gemini-3.1-pro-preview",
 	"gemini-3-flash-preview": "gemini-3-flash",
 
 	// GPT-5.1-codex-max is an alias for gpt-5.1-codex (no "max" variant exists)

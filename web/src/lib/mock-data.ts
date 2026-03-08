@@ -4,6 +4,8 @@ import {
   TimeSeriesPoint,
   ModelStats,
   CredentialStats,
+  CredentialProfile,
+  CopilotUsage,
   AuditResponse,
   AuditFilters,
 } from '@/types/api';
@@ -18,6 +20,7 @@ export function generateMockOverview(): OverviewStats {
     error_rate: 0.023,
     period: '24h',
     last_updated_at: new Date().toISOString(),
+    total_cached_tokens: 9234512,
   };
 }
 
@@ -93,16 +96,24 @@ export function generateMockModelStats(): ModelStats[] {
     { model: 'claude-opus-4-6', provider: 'anthropic' },
   ];
 
-  return models.map((m) => ({
-    ...m,
-    requests: Math.floor(5000 + Math.random() * 20000),
-    tokens_in: Math.floor(500000 + Math.random() * 2000000),
-    tokens_out: Math.floor(200000 + Math.random() * 800000),
-    cost: Number((50 + Math.random() * 150).toFixed(2)),
-    avg_latency_ms: Math.floor(100 + Math.random() * 400),
+  return models.map((m) => {
+    const tokensIn = Math.floor(500000 + Math.random() * 2000000);
+    const cachedTokens = Math.floor(100000 + Math.random() * 900000);
+    const tokensOut = Math.floor(200000 + Math.random() * 800000);
+
+    return {
+      ...m,
+      requests: Math.floor(5000 + Math.random() * 20000),
+      tokens_in: tokensIn,
+      cached_tokens: cachedTokens,
+      tokens_out: tokensOut,
+      total_tokens: tokensIn + cachedTokens + tokensOut,
+      cost: Number((50 + Math.random() * 150).toFixed(2)),
+      avg_latency_ms: Math.floor(100 + Math.random() * 400),
       error_count: Math.floor(Math.random() * 30),
       canceled_count: Math.floor(Math.random() * 20),
-    }));
+    };
+  });
 }
 
 export function generateMockCredentialStats(): CredentialStats[] {
@@ -126,6 +137,7 @@ export function generateMockCredentialStats(): CredentialStats[] {
 
   return credentials.map((credential) => {
     const tokensIn = Math.floor(500000 + Math.random() * 1500000);
+    const cachedTokens = Math.floor(80000 + Math.random() * 500000);
     const tokensOut = Math.floor(250000 + Math.random() * 1000000);
     return {
       credential_id: credential.credential_id,
@@ -133,13 +145,75 @@ export function generateMockCredentialStats(): CredentialStats[] {
       credential_account_id: credential.credential_account_id,
       requests: Math.floor(3000 + Math.random() * 12000),
       tokens_in: tokensIn,
+      cached_tokens: cachedTokens,
       tokens_out: tokensOut,
-      total_tokens: tokensIn + tokensOut,
+      total_tokens: tokensIn + cachedTokens + tokensOut,
       cost: Number((35 + Math.random() * 120).toFixed(2)),
       error_count: Math.floor(Math.random() * 40),
       canceled_count: Math.floor(Math.random() * 30),
     };
   });
+}
+
+export function generateMockCredentialProfiles(): CredentialProfile[] {
+  const now = Date.now();
+  return [
+    {
+      id: 'cred-copilot-001',
+      type: 'copilot',
+      account_id: 'octocat',
+      email: 'octocat@github.test',
+      enabled: true,
+      expired: new Date(now + 45 * 60 * 1000).toISOString(),
+      last_refresh_at: new Date(now - 5 * 60 * 1000).toISOString(),
+    },
+    {
+      id: 'cred-copilot-002',
+      type: 'copilot',
+      account_id: 'hubot',
+      email: 'hubot@github.test',
+      enabled: true,
+      expired: new Date(now + 25 * 60 * 1000).toISOString(),
+      last_refresh_at: new Date(now - 10 * 60 * 1000).toISOString(),
+    },
+  ];
+}
+
+export function generateMockCopilotUsages(): CopilotUsage[] {
+  return [
+    {
+      credential_id: 'cred-copilot-001',
+      login: 'octocat',
+      quota_reset_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      quota_reset_date_utc: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      fetched_at: new Date().toISOString(),
+      quota_snapshots: {
+        premium_interactions: {
+          entitlement: 300,
+          remaining: 238,
+          percent_remaining: 79,
+          quota_id: 'premium_interactions',
+          unlimited: false,
+        },
+      },
+    },
+    {
+      credential_id: 'cred-copilot-002',
+      login: 'hubot',
+      quota_reset_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      quota_reset_date_utc: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      fetched_at: new Date().toISOString(),
+      quota_snapshots: {
+        premium_interactions: {
+          entitlement: 300,
+          remaining: 121,
+          percent_remaining: 40.33,
+          quota_id: 'premium_interactions',
+          unlimited: false,
+        },
+      },
+    },
+  ];
 }
 
 export function generateMockAuditTrail(filters: AuditFilters): AuditResponse {
