@@ -31,6 +31,9 @@ type RouterDeps struct {
 	OAuthSessionTTL        time.Duration
 	OAuthCompletionService usecasecredential.OAuthCompletionService
 	CompletionService      usecasecompletion.CompletionService // Optional: may be nil
+	// EnableCopilotResponsesRouting controls whether /responses passthrough is enabled
+	// for Copilot models that support it.
+	EnableCopilotResponsesRouting bool
 
 	// Copilot OAuth dependencies (optional)
 	CopilotOAuthProvider          usecaseoauth.OAuthProvider
@@ -190,7 +193,16 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 		completionLogger := loggerinfra.ForModule("delivery.http.handler.completion")
 		chatHandler := handler.NewChatHandler(deps.CompletionService, completionLogger)
 		modelsHandler := handler.NewModelsHandler(deps.CompletionService, completionLogger)
-		responsesHandler := handler.NewResponsesHandler(deps.CompletionService, completionLogger)
+		responsesHandler := handler.NewResponsesHandler(
+			deps.CompletionService,
+			deps.Router,
+			deps.ProviderRegistry,
+			completionLogger,
+			deps.EnableCopilotResponsesRouting,
+		)
+		if deps.UsagePublisher != nil {
+			responsesHandler.SetUsagePublisher(deps.UsagePublisher)
+		}
 
 		// Chat completions (primary endpoint)
 		r.POST("/v1/chat/completions", chatHandler.ChatCompletion)

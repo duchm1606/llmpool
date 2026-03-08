@@ -276,6 +276,7 @@ func main() {
 		OAuthSessionTTL:               cfg.OAuth.Codex.SessionTTL,
 		OAuthCompletionService:        oauthCompletionService,
 		CompletionService:             completionService, // May be nil if routing disabled
+		EnableCopilotResponsesRouting: cfg.Providers["copilot"].EnableResponsesRouting,
 		CopilotOAuthProvider:          copilotProvider,
 		CopilotOAuthSessionTTL:        cfg.OAuth.Copilot.SessionTTL,
 		CopilotOAuthCompletionService: copilotOAuthCompletionService,

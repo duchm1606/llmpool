@@ -120,6 +120,19 @@ func (h *ChatHandler) handleNonStreaming(c *gin.Context, req domaincompletion.Ch
 func (h *ChatHandler) handleStreaming(c *gin.Context, req domaincompletion.ChatCompletionRequest) {
 	ctx := c.Request.Context()
 
+	// Preflight validation/routing before committing streaming headers.
+	// This ensures model/provider errors return proper HTTP status instead of
+	// an implicit 200 after headers are flushed.
+	if err := h.service.ValidateRequest(ctx, req); err != nil {
+		var apiErr *domaincompletion.APIError
+		if errors.As(err, &apiErr) {
+			h.respondError(c, apiErr)
+			return
+		}
+		h.respondError(c, domaincompletion.ErrInternalServer(err.Error()))
+		return
+	}
+
 	// Set SSE headers
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")

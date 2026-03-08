@@ -31,6 +31,11 @@ func (m *mockCompletionService) ChatCompletion(
 	return m.response, m.err
 }
 
+func (m *mockCompletionService) ValidateRequest(_ context.Context, req domaincompletion.ChatCompletionRequest) error {
+	m.lastRequest = req
+	return m.err
+}
+
 func (m *mockCompletionService) ChatCompletionStream(
 	_ context.Context,
 	req domaincompletion.ChatCompletionRequest,
@@ -191,5 +196,43 @@ func TestChatHandler_ProviderPrefix(t *testing.T) {
 	// Check that provider hint was extracted
 	if mockService.lastRequest.ProviderHint != "copilot" {
 		t.Errorf("expected provider hint to be 'copilot', got %q", mockService.lastRequest.ProviderHint)
+	}
+}
+
+func TestChatHandler_StreamingValidationErrorReturnsNon200(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	modelNotFound := domaincompletion.ErrModelNotFound("claude-4.5-opus-high")
+	mockService := &mockCompletionService{err: modelNotFound}
+	handler := NewChatHandler(mockService, zap.NewNop())
+
+	body := map[string]any{
+		"model":    "claude-4.5-opus-high",
+		"messages": []map[string]any{{"role": "user", "content": "hello"}},
+		"stream":   true,
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(bodyBytes))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.ChatCompletion(c)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", w.Code)
+	}
+
+	if got := w.Header().Get("Content-Type"); got == "text/event-stream" {
+		t.Fatalf("expected non-SSE error response content-type, got %q", got)
+	}
+
+	var errResp domaincompletion.APIErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &errResp); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+	if errResp.Error.Message != modelNotFound.Message {
+		t.Fatalf("expected error message %q, got %q", modelNotFound.Message, errResp.Error.Message)
 	}
 }

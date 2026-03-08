@@ -72,6 +72,26 @@ func (s *service) SetUsagePublisher(publisher UsagePublisher) {
 	s.usagePublisher = publisher
 }
 
+// ValidateRequest validates request fields and preflights routing feasibility.
+// This is intended for handlers that need to ensure errors are returned before
+// committing streaming response headers.
+func (s *service) ValidateRequest(ctx context.Context, req domaincompletion.ChatCompletionRequest) error {
+	if err := s.validateRequest(req); err != nil {
+		return err
+	}
+
+	_, err := s.router.RouteWithHint(ctx, req.Model, req.ProviderHint, nil)
+	if err != nil {
+		var apiErr *domaincompletion.APIError
+		if errors.As(err, &apiErr) {
+			return apiErr
+		}
+		return domaincompletion.ErrInternalServer(err.Error())
+	}
+
+	return nil
+}
+
 // ChatCompletion handles a chat completion request with routing and fallback.
 func (s *service) ChatCompletion(
 	ctx context.Context,

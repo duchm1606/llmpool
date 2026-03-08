@@ -701,14 +701,16 @@ func (st *StreamState) buildCompletedEvent(nextSeq func() int) map[string]any {
 			"output_tokens": st.CompletionTokens,
 			"total_tokens":  st.TotalTokens,
 		}
-		if st.CachedTokens > 0 {
-			usage["input_tokens_details"] = map[string]any{
-				"cached_tokens": st.CachedTokens,
-			}
+		usage["input_tokens_details"] = map[string]any{
+			"cached_tokens": st.CachedTokens,
 		}
 		if st.ReasoningTokens > 0 {
 			usage["output_tokens_details"] = map[string]any{
 				"reasoning_tokens": st.ReasoningTokens,
+			}
+		} else {
+			usage["output_tokens_details"] = map[string]any{
+				"reasoning_tokens": 0,
 			}
 		}
 		response["usage"] = usage

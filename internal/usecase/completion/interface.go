@@ -119,6 +119,10 @@ type Router interface {
 
 // CompletionService orchestrates completion requests.
 type CompletionService interface {
+	// ValidateRequest validates request fields and preflights routing feasibility.
+	// Handlers can use this before committing streaming headers.
+	ValidateRequest(ctx context.Context, req domaincompletion.ChatCompletionRequest) error
+
 	// ChatCompletion handles a chat completion request with routing and fallback.
 	ChatCompletion(
 		ctx context.Context,

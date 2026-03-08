@@ -636,6 +636,8 @@ func (h *MessagesHandler) extractUsageFromSSEBuffer(data []byte, current *anthro
 								return int(x)
 							case int:
 								return x
+							case int64:
+								return int(x)
 							default:
 								return 0
 							}
@@ -656,6 +658,16 @@ func (h *MessagesHandler) extractUsageFromSSEBuffer(data []byte, current *anthro
 						}
 						if cacheCreation := toInt(usageMap["cache_creation_input_tokens"]); cacheCreation > 0 {
 							merged.CacheCreationInputTokens = cacheCreation
+						}
+						if merged.CacheReadInputTokens == 0 {
+							if details, ok := usageMap["input_tokens_details"].(map[string]any); ok {
+								if cached := toInt(details["cached_tokens"]); cached > 0 {
+									merged.CacheReadInputTokens = cached
+								}
+							}
+						}
+						if merged.CacheReadInputTokens > 0 && merged.InputTokens >= merged.CacheReadInputTokens {
+							merged.InputTokens -= merged.CacheReadInputTokens
 						}
 						return merged
 					}
