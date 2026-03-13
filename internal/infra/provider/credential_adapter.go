@@ -31,6 +31,7 @@ type ExtendedTokenFetcher interface {
 	TokenFetcher
 	// GetNextTokenWithInfo returns token and metadata for tracking.
 	GetNextTokenWithInfo(ctx context.Context, providerType string) (token string, meta usecasecompletion.CredentialMetadata, err error)
+	GetNextTokenWithInfoForQuotaMode(ctx context.Context, providerType string, quotaMode usecasecompletion.SessionQuotaMode) (token string, meta usecasecompletion.CredentialMetadata, err error)
 }
 
 // credentialProvider implements CredentialProvider using the existing credential system.
@@ -73,6 +74,14 @@ func (cp *credentialProvider) GetTokenWithInfo(
 	ctx context.Context,
 	providerID domainprovider.ProviderID,
 ) (token string, meta usecasecompletion.CredentialMetadata, err error) {
+	return cp.GetTokenWithInfoForQuotaMode(ctx, providerID, usecasecompletion.SessionQuotaConsume)
+}
+
+func (cp *credentialProvider) GetTokenWithInfoForQuotaMode(
+	ctx context.Context,
+	providerID domainprovider.ProviderID,
+	quotaMode usecasecompletion.SessionQuotaMode,
+) (token string, meta usecasecompletion.CredentialMetadata, err error) {
 	meta.Type = string(providerID)
 	// Check for static key first
 	cp.mu.RLock()
@@ -96,7 +105,7 @@ func (cp *credentialProvider) GetTokenWithInfo(
 
 	// Try extended fetcher first
 	if extFetcher, ok := cp.fetcher.(ExtendedTokenFetcher); ok {
-		token, meta, err = extFetcher.GetNextTokenWithInfo(ctx, providerType)
+		token, meta, err = extFetcher.GetNextTokenWithInfoForQuotaMode(ctx, providerType, quotaMode)
 		if meta.Type == "" {
 			meta.Type = providerType
 		}

@@ -158,6 +158,19 @@ type BackendCopilotUsage = {
       unlimited: boolean;
     };
   };
+  session_quota?: {
+    window_start_utc: string;
+    window_end_utc: string;
+    minute_window_start_utc: string;
+    minute_window_end_utc: string;
+    requests_per_minute: number;
+    requests_this_minute: number;
+    remaining_this_minute: number;
+    requests_per_session: number;
+    requests_this_session: number;
+    remaining_this_session: number;
+    first_initiator_used: boolean;
+  };
   fetched_at: string;
 };
 
@@ -350,6 +363,7 @@ class ApiClient {
       quota_reset_date: usage.quota_reset_date,
       quota_reset_date_utc: usage.quota_reset_date_utc,
       quota_snapshots: usage.quota_snapshots,
+      session_quota: usage.session_quota,
       fetched_at: usage.fetched_at,
     }));
   }

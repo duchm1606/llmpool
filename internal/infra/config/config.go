@@ -120,11 +120,17 @@ type LivenessConfig struct {
 
 // RoutingConfig holds configuration for the completion API routing.
 type RoutingConfig struct {
-	Enabled          bool           `mapstructure:"enabled"`
-	ProviderPriority []string       `mapstructure:"provider_priority"`
-	Fallback         FallbackConfig `mapstructure:"fallback"`
-	RequestTimeout   time.Duration  `mapstructure:"request_timeout"`
-	Health           HealthConfig   `mapstructure:"health"`
+	Enabled          bool                   `mapstructure:"enabled"`
+	ProviderPriority []string               `mapstructure:"provider_priority"`
+	Fallback         FallbackConfig         `mapstructure:"fallback"`
+	RequestTimeout   time.Duration          `mapstructure:"request_timeout"`
+	Health           HealthConfig           `mapstructure:"health"`
+	AccountRateLimit AccountRateLimitConfig `mapstructure:"account_rate_limit"`
+}
+
+type AccountRateLimitConfig struct {
+	RequestsPerMinute       int `mapstructure:"requests_per_minute"`
+	RequestsPer5HourSession int `mapstructure:"requests_per_5hour_session"`
 }
 
 // FallbackConfig configures fallback behavior.
@@ -380,6 +386,15 @@ func Load() (*Config, error) {
 		}
 	}
 
+	if cfg.Routing.Enabled {
+		if cfg.Routing.AccountRateLimit.RequestsPerMinute <= 0 {
+			return nil, fmt.Errorf("routing.account_rate_limit.requests_per_minute must be > 0 when routing is enabled")
+		}
+		if cfg.Routing.AccountRateLimit.RequestsPer5HourSession <= 0 {
+			return nil, fmt.Errorf("routing.account_rate_limit.requests_per_5hour_session must be > 0 when routing is enabled")
+		}
+	}
+
 	return &cfg, nil
 }
 
@@ -443,6 +458,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("routing.health.failure_threshold", 3)
 	v.SetDefault("routing.health.cooldown_duration", "30s")
 	v.SetDefault("routing.health.rate_limit_default_cooldown", "60s")
+	v.SetDefault("routing.account_rate_limit.requests_per_minute", 5)
+	v.SetDefault("routing.account_rate_limit.requests_per_5hour_session", 50)
 
 	// Messages API defaults (Anthropic-style adapter)
 	v.SetDefault("messages_api.small_model", "")                    // Empty = use requested model

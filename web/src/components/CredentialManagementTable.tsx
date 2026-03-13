@@ -25,6 +25,7 @@ type QuotaView = {
   id: string;
   percent: number | null;
   label: string;
+  sublabel?: string;
 };
 
 const POLL_FALLBACK_INTERVAL_MS = 5_000;
@@ -66,6 +67,46 @@ function quotaFromUsage(usage?: CopilotUsage): QuotaView {
     percent,
     label: total > 0 ? `${used}/${total}` : 'N/A',
   };
+}
+
+function sessionQuotaFromUsage(usage?: CopilotUsage): QuotaView {
+	const sessionQuota = usage?.session_quota;
+	if (!sessionQuota) {
+		return {
+			id: 'llmpool-session',
+			percent: null,
+			label: 'N/A',
+		};
+	}
+
+	const total = Number(sessionQuota.requests_per_session) || 0;
+	const used = Number(sessionQuota.requests_this_session) || 0;
+	const percent = total > 0 ? Math.max(0, Math.min((used / total) * 100, 100)) : null;
+
+	return {
+		id: 'llmpool-session',
+		percent,
+		label: total > 0 ? `${used}/${total}` : 'N/A',
+		sublabel: formatSessionResetLabel(sessionQuota.window_end_utc),
+	};
+}
+
+function formatSessionResetLabel(windowEnd?: string): string | undefined {
+	if (!windowEnd) {
+		return undefined;
+	}
+
+	const endMs = new Date(windowEnd).getTime();
+	if (Number.isNaN(endMs)) {
+		return undefined;
+	}
+
+	const remainingMs = Math.max(0, endMs - Date.now());
+	const totalMinutes = Math.floor(remainingMs / 60000);
+	const hours = Math.floor(totalMinutes / 60);
+	const minutes = totalMinutes % 60;
+
+	return `Reset in ${hours}h ${minutes}m`;
 }
 
 function statusErrorMessage(resp: CopilotDeviceStatusResponse): string {
@@ -172,10 +213,12 @@ export function CredentialManagementTable({ profiles, usages, loading, onDataRef
       .map((profile) => {
         const usage = usageByCredential.get(profile.id);
         const quota = quotaFromUsage(usage);
+        const sessionQuota = sessionQuotaFromUsage(usage);
         return {
           profile,
           usage,
           quota,
+          sessionQuota,
         };
       })
       .sort((a, b) => {
@@ -482,13 +525,32 @@ export function CredentialManagementTable({ profiles, usages, loading, onDataRef
                       {row.profile.expired ? formatDateTime(row.profile.expired) : '-'}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-600 min-w-56">
-                      <div className="flex items-center justify-between text-xs mb-1">
-                        <span className="text-gray-500">{row.quota.id}</span>
-                        <span className="font-medium text-gray-700">{row.quota.label}</span>
-                      </div>
-                      <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
-                        <div className="h-full bg-blue-500" style={{ width: progressWidth }} />
-                      </div>
+	                      <div className="space-y-3">
+	                        <div>
+	                          <div className="flex items-center justify-between text-xs mb-1">
+	                            <span className="text-gray-500">{row.quota.id}</span>
+	                            <span className="font-medium text-gray-700">{row.quota.label}</span>
+	                          </div>
+	                          <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+	                            <div className="h-full bg-blue-500" style={{ width: progressWidth }} />
+	                          </div>
+	                        </div>
+	                        <div>
+	                          <div className="flex items-center justify-between text-xs mb-1">
+	                            <span className="text-gray-500">{row.sessionQuota.id}</span>
+	                            <span className="font-medium text-gray-700">{row.sessionQuota.label}</span>
+	                          </div>
+	                          {row.sessionQuota.sublabel && (
+	                            <div className="text-[11px] text-gray-500 mb-1">{row.sessionQuota.sublabel}</div>
+	                          )}
+	                          <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+	                            <div
+	                              className="h-full bg-emerald-500"
+	                              style={{ width: row.sessionQuota.percent === null ? '0%' : `${row.sessionQuota.percent}%` }}
+	                            />
+	                          </div>
+	                        </div>
+	                      </div>
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm">
                       <div className="flex items-center gap-2">

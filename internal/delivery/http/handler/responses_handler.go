@@ -168,7 +168,12 @@ func (h *ResponsesHandler) handleLegacyResponses(c *gin.Context, respReq *transl
 func (h *ResponsesHandler) handleNativeResponsesPassthrough(c *gin.Context, req *translator.ResponsesRequest, rawBody []byte) {
 	ctx := c.Request.Context()
 
-	decision, err := h.router.RouteWithHint(ctx, req.Model, "copilot", nil)
+	chatReq, convErr := translator.ConvertResponsesToChat(req)
+	if convErr != nil {
+		h.respondError(c, domaincompletion.ErrInvalidJSON("failed to convert request: "+convErr.Error()))
+		return
+	}
+	decision, err := h.router.RouteWithHint(ctx, req.Model, "copilot", usecasecompletion.SessionQuotaModeForRequest(h.buildDomainRequest(chatReq)), nil)
 	if err != nil {
 		var apiErr *domaincompletion.APIError
 		if errors.As(err, &apiErr) {
@@ -497,6 +502,10 @@ func parseProviderErrorToAPIError(statusCode int, body []byte) *domaincompletion
 }
 
 func applyResponsesCopilotHeaders(req *http.Request, decision *domainprovider.RoutingDecision) {
+	if decision == nil {
+		return
+	}
+
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+decision.Token)
 	req.Header.Set("Copilot-Integration-Id", "vscode-chat")
@@ -506,7 +515,11 @@ func applyResponsesCopilotHeaders(req *http.Request, decision *domainprovider.Ro
 	req.Header.Set("Openai-Intent", "conversation-edits")
 	req.Header.Set("X-Github-Api-Version", copilotGitHubAPIVersionResp)
 	req.Header.Set("X-Vscode-User-Agent-Library-Version", "electron-fetch")
-	req.Header.Set("X-Initiator", "agent")
+	initiator := "agent"
+	if decision.Initiator == "user" {
+		initiator = "user"
+	}
+	req.Header.Set("X-Initiator", initiator)
 
 	for k, v := range decision.Headers {
 		req.Header.Set(k, v)

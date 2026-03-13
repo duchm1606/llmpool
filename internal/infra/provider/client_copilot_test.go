@@ -134,6 +134,53 @@ func TestChatCompletionStreamCopilot_PathAndInitiator(t *testing.T) {
 	}
 }
 
+func TestChatCompletionCopilot_UsesUserInitiatorWhenDecisionRequestsIt(t *testing.T) {
+	var gotInitiator string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotInitiator = r.Header.Get("X-Initiator")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":      "chatcmpl-test",
+			"object":  "chat.completion",
+			"created": 1,
+			"model":   "gpt-4o",
+			"choices": []map[string]any{{
+				"index": 0,
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": "ok",
+				},
+				"finish_reason": "stop",
+			}},
+		})
+	}))
+	defer server.Close()
+
+	c := &client{httpClient: server.Client(), logger: zap.NewNop()}
+
+	decision := domainprovider.RoutingDecision{
+		ProviderID: domainprovider.ProviderCopilot,
+		BaseURL:    server.URL,
+		Token:      "copilot-token",
+		Initiator:  "user",
+	}
+
+	request := domaincompletion.ChatCompletionRequest{
+		Model:    "gpt-4o",
+		Messages: []domaincompletion.Message{{Role: "user", Content: "hello"}},
+	}
+
+	_, err := c.chatCompletionCopilot(t.Context(), decision, request)
+	if err != nil {
+		t.Fatalf("chatCompletionCopilot failed: %v", err)
+	}
+
+	if gotInitiator != "user" {
+		t.Fatalf("unexpected X-Initiator: got %q, want %q", gotInitiator, "user")
+	}
+}
+
 func TestHasVisionContent_DetectsTypedContentPart(t *testing.T) {
 	req := domaincompletion.ChatCompletionRequest{
 		Messages: []domaincompletion.Message{

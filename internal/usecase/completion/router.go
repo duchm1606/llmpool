@@ -52,16 +52,17 @@ func NewRouter(
 
 // Route selects a provider for the given model.
 func (r *router) Route(ctx context.Context, model string) (*domainprovider.RoutingDecision, error) {
-	return r.RouteWithFallback(ctx, model, nil)
+	return r.RouteWithFallback(ctx, model, SessionQuotaConsume, nil)
 }
 
 // RouteWithFallback attempts to route, excluding specified providers.
 func (r *router) RouteWithFallback(
 	ctx context.Context,
 	model string,
+	quotaMode SessionQuotaMode,
 	excludeProviders []domainprovider.ProviderID,
 ) (*domainprovider.RoutingDecision, error) {
-	return r.RouteWithHint(ctx, model, "", excludeProviders)
+	return r.RouteWithHint(ctx, model, "", quotaMode, excludeProviders)
 }
 
 // RouteWithHint routes with an explicit provider hint.
@@ -70,6 +71,7 @@ func (r *router) RouteWithHint(
 	ctx context.Context,
 	model string,
 	providerHint string,
+	quotaMode SessionQuotaMode,
 	excludeProviders []domainprovider.ProviderID,
 ) (*domainprovider.RoutingDecision, error) {
 	// Validate model ID format - reject prefixed models (should be parsed by handler)
@@ -174,7 +176,7 @@ func (r *router) RouteWithHint(
 			var err error
 			// Try extended provider first for credential tracking
 			if extProvider, ok := r.credProvider.(ExtendedCredentialProvider); ok {
-				token, credentialMeta, err = extProvider.GetTokenWithInfo(ctx, providerID)
+				token, credentialMeta, err = extProvider.GetTokenWithInfoForQuotaMode(ctx, providerID, quotaMode)
 			} else {
 				token, err = r.credProvider.GetToken(ctx, providerID)
 			}
@@ -197,6 +199,7 @@ func (r *router) RouteWithHint(
 			CredentialID:        credentialMeta.CredentialID,
 			CredentialType:      credentialMeta.Type,
 			CredentialAccountID: credentialMeta.AccountID,
+			Initiator:           credentialMeta.Initiator,
 		}
 
 		r.logger.Info("routing request to provider",
@@ -205,6 +208,7 @@ func (r *router) RouteWithHint(
 			zap.String("credential_id", credentialMeta.CredentialID),
 			zap.String("credential_type", credentialMeta.Type),
 			zap.String("credential_account_id", credentialMeta.AccountID),
+			zap.String("initiator", credentialMeta.Initiator),
 			zap.String("base_url", provider.BaseURL),
 			zap.String("provider_hint", providerHint),
 		)

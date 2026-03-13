@@ -582,3 +582,68 @@ func TestLoad_AllowsOAuthCopilotAccountTypeBusiness(t *testing.T) {
 		t.Fatalf("expected oauth.copilot.account_type=business, got %q", cfg.OAuth.Copilot.AccountType)
 	}
 }
+
+func TestLoad_AccountRateLimitDefaults(t *testing.T) {
+	rootDir, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatalf("resolve root dir: %v", err)
+	}
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(oldWd)
+	}()
+
+	if err := os.Chdir(rootDir); err != nil {
+		t.Fatalf("chdir root: %v", err)
+	}
+
+	t.Setenv("LLMPOOL_SECURITY_ENCRYPTION_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
+	t.Setenv("LLMPOOL_OAUTH_CODEX_CLIENT_ID", "test-client-id")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.Routing.AccountRateLimit.RequestsPerMinute != 5 {
+		t.Fatalf("expected requests_per_minute default 5, got %d", cfg.Routing.AccountRateLimit.RequestsPerMinute)
+	}
+	if cfg.Routing.AccountRateLimit.RequestsPer5HourSession != 50 {
+		t.Fatalf("expected requests_per_5hour_session default 50, got %d", cfg.Routing.AccountRateLimit.RequestsPer5HourSession)
+	}
+}
+
+func TestLoad_InvalidAccountRateLimitConfig(t *testing.T) {
+	rootDir, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatalf("resolve root dir: %v", err)
+	}
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(oldWd)
+	}()
+
+	if err := os.Chdir(rootDir); err != nil {
+		t.Fatalf("chdir root: %v", err)
+	}
+
+	t.Setenv("LLMPOOL_SECURITY_ENCRYPTION_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
+	t.Setenv("LLMPOOL_OAUTH_CODEX_CLIENT_ID", "test-client-id")
+	t.Setenv("LLMPOOL_ROUTING_ACCOUNT_RATE_LIMIT_REQUESTS_PER_MINUTE", "0")
+
+	_, err = Load()
+	if err == nil {
+		t.Fatal("expected validation error for zero requests_per_minute")
+	}
+	if !strings.Contains(err.Error(), "routing.account_rate_limit.requests_per_minute must be > 0") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

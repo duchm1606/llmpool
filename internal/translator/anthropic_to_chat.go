@@ -90,6 +90,16 @@ func AnthropicToChatCompletion(req *anthropic.MessagesRequest) ([]byte, error) {
 	return json.Marshal(chatReq)
 }
 
+// ConvertAnthropicUserMessageToChat exposes Anthropic user-message normalization.
+func ConvertAnthropicUserMessageToChat(msg anthropic.Message) []domaincompletion.Message {
+	return convertUserMessageToChat(msg)
+}
+
+// ConvertAnthropicAssistantMessageToChat exposes Anthropic assistant-message normalization.
+func ConvertAnthropicAssistantMessageToChat(msg anthropic.Message) []domaincompletion.Message {
+	return convertAssistantMessageToChat(msg)
+}
+
 // convertUserMessageToChat converts an Anthropic user message to OpenAI chat format.
 // Tool results are emitted as separate role=tool messages before any user content.
 func convertUserMessageToChat(msg anthropic.Message) []domaincompletion.Message {

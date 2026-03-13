@@ -180,6 +180,21 @@ type CopilotQuotaSnapshots struct {
 	PremiumInteractions *CopilotQuotaSnapshot `json:"premium_interactions,omitempty"`
 }
 
+// SessionQuotaUsage represents LLMPool-managed account rate-limit usage.
+type SessionQuotaUsage struct {
+	WindowStartUTC       time.Time `json:"window_start_utc"`
+	WindowEndUTC         time.Time `json:"window_end_utc"`
+	MinuteWindowStartUTC time.Time `json:"minute_window_start_utc"`
+	MinuteWindowEndUTC   time.Time `json:"minute_window_end_utc"`
+	RequestsPerMinute    int       `json:"requests_per_minute"`
+	RequestsThisMinute   int       `json:"requests_this_minute"`
+	RemainingThisMinute  int       `json:"remaining_this_minute"`
+	RequestsPerSession   int       `json:"requests_per_session"`
+	RequestsThisSession  int       `json:"requests_this_session"`
+	RemainingThisSession int       `json:"remaining_this_session"`
+	FirstInitiatorUsed   bool      `json:"first_initiator_used"`
+}
+
 // CopilotEndpoints holds the API endpoints for a Copilot account.
 type CopilotEndpoints struct {
 	API           string `json:"api,omitempty"`
@@ -218,6 +233,7 @@ type CopilotUsage struct {
 	QuotaResetDate    string                 `json:"quota_reset_date,omitempty"`
 	QuotaResetDateUTC string                 `json:"quota_reset_date_utc,omitempty"`
 	QuotaSnapshots    *CopilotQuotaSnapshots `json:"quota_snapshots,omitempty"`
+	SessionQuota      *SessionQuotaUsage     `json:"session_quota,omitempty"`
 
 	// Metadata
 	FetchedAt time.Time `json:"fetched_at"`

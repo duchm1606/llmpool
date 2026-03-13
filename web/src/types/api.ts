@@ -100,12 +100,27 @@ export interface CopilotQuotaSnapshots {
   premium_interactions?: CopilotQuotaSnapshot;
 }
 
+export interface SessionQuotaUsage {
+  window_start_utc: string;
+  window_end_utc: string;
+  minute_window_start_utc: string;
+  minute_window_end_utc: string;
+  requests_per_minute: number;
+  requests_this_minute: number;
+  remaining_this_minute: number;
+  requests_per_session: number;
+  requests_this_session: number;
+  remaining_this_session: number;
+  first_initiator_used: boolean;
+}
+
 export interface CopilotUsage {
   credential_id: string;
   login?: string;
   quota_reset_date?: string;
   quota_reset_date_utc?: string;
   quota_snapshots?: CopilotQuotaSnapshots;
+  session_quota?: SessionQuotaUsage;
   fetched_at: string;
 }
 

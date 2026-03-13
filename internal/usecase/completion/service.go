@@ -72,6 +72,16 @@ func (s *service) SetUsagePublisher(publisher UsagePublisher) {
 	s.usagePublisher = publisher
 }
 
+func SessionQuotaModeForRequest(req domaincompletion.ChatCompletionRequest) SessionQuotaMode {
+	if len(req.Messages) == 0 {
+		return SessionQuotaConsume
+	}
+	if req.Messages[len(req.Messages)-1].Role == "user" {
+		return SessionQuotaConsume
+	}
+	return SessionQuotaBypass
+}
+
 // ValidateRequest validates request fields and preflights routing feasibility.
 // This is intended for handlers that need to ensure errors are returned before
 // committing streaming response headers.
@@ -80,7 +90,7 @@ func (s *service) ValidateRequest(ctx context.Context, req domaincompletion.Chat
 		return err
 	}
 
-	_, err := s.router.RouteWithHint(ctx, req.Model, req.ProviderHint, nil)
+	_, err := s.router.RouteWithHint(ctx, req.Model, req.ProviderHint, SessionQuotaModeForRequest(req), nil)
 	if err != nil {
 		var apiErr *domaincompletion.APIError
 		if errors.As(err, &apiErr) {
@@ -116,7 +126,7 @@ func (s *service) ChatCompletion(
 		}
 
 		// Route to a provider (with optional provider hint)
-		decision, err := s.router.RouteWithHint(ctx, req.Model, req.ProviderHint, excludeProviders)
+		decision, err := s.router.RouteWithHint(ctx, req.Model, req.ProviderHint, SessionQuotaModeForRequest(req), excludeProviders)
 		if err != nil {
 			// No more providers available
 			if lastAPIErr != nil {
@@ -273,6 +283,7 @@ func (s *service) tryRefreshCopilotAndRetry(
 		ctx,
 		req.Model,
 		string(domainprovider.ProviderCopilot),
+		SessionQuotaModeForRequest(req),
 		nil,
 	)
 	if routeErr != nil {
@@ -351,6 +362,7 @@ func (s *service) tryRefreshCopilotAndRetryStream(
 		ctx,
 		req.Model,
 		string(domainprovider.ProviderCopilot),
+		SessionQuotaModeForRequest(req),
 		nil,
 	)
 	if routeErr != nil {
@@ -405,7 +417,7 @@ func (s *service) ChatCompletionStream(
 		}
 
 		// Route to a provider (with optional provider hint)
-		decision, err := s.router.RouteWithHint(ctx, req.Model, req.ProviderHint, excludeProviders)
+		decision, err := s.router.RouteWithHint(ctx, req.Model, req.ProviderHint, SessionQuotaModeForRequest(req), excludeProviders)
 		if err != nil {
 			var apiErr *domaincompletion.APIError
 			if errors.As(err, &apiErr) {

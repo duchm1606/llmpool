@@ -13,29 +13,33 @@ import (
 )
 
 type mockServiceRouter struct {
-	decisions []*domainprovider.RoutingDecision
-	routeErr  error
-	callCount int
+	decisions  []*domainprovider.RoutingDecision
+	routeErr   error
+	callCount  int
+	quotaModes []SessionQuotaMode
 }
 
 func (m *mockServiceRouter) Route(ctx context.Context, model string) (*domainprovider.RoutingDecision, error) {
-	return m.RouteWithHint(ctx, model, "", nil)
+	return m.RouteWithHint(ctx, model, "", SessionQuotaConsume, nil)
 }
 
 func (m *mockServiceRouter) RouteWithFallback(
 	ctx context.Context,
 	model string,
+	quotaMode SessionQuotaMode,
 	excludeProviders []domainprovider.ProviderID,
 ) (*domainprovider.RoutingDecision, error) {
-	return m.RouteWithHint(ctx, model, "", excludeProviders)
+	return m.RouteWithHint(ctx, model, "", quotaMode, excludeProviders)
 }
 
 func (m *mockServiceRouter) RouteWithHint(
 	_ context.Context,
 	_ string,
 	_ string,
+	quotaMode SessionQuotaMode,
 	_ []domainprovider.ProviderID,
 ) (*domainprovider.RoutingDecision, error) {
+	m.quotaModes = append(m.quotaModes, quotaMode)
 	if m.routeErr != nil {
 		return nil, m.routeErr
 	}
@@ -45,6 +49,28 @@ func (m *mockServiceRouter) RouteWithHint(
 	decision := m.decisions[m.callCount]
 	m.callCount++
 	return decision, nil
+}
+
+func TestSessionQuotaModeForRequest(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		req  domaincompletion.ChatCompletionRequest
+		want SessionQuotaMode
+	}{
+		{name: "empty request defaults to consume", req: domaincompletion.ChatCompletionRequest{}, want: SessionQuotaConsume},
+		{name: "last user message consumes", req: domaincompletion.ChatCompletionRequest{Messages: []domaincompletion.Message{{Role: "tool", Content: "result"}, {Role: "user", Content: "continue"}}}, want: SessionQuotaConsume},
+		{name: "last tool message bypasses", req: domaincompletion.ChatCompletionRequest{Messages: []domaincompletion.Message{{Role: "assistant", Content: "tool_call"}, {Role: "tool", Content: "result"}}}, want: SessionQuotaBypass},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := SessionQuotaModeForRequest(tt.req); got != tt.want {
+				t.Fatalf("SessionQuotaModeForRequest() = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }
 
 type mockServiceRegistry struct{}

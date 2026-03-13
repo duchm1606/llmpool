@@ -41,7 +41,9 @@ type RouterDeps struct {
 	CopilotOAuthCompletionService usecasecredential.OAuthCompletionService
 
 	// Usage cache for usage endpoint (optional)
-	UsageCache handler.UsageCache
+	UsageCache                handler.UsageCache
+	UsageCredentialRepository handler.UsageCredentialRepository
+	SessionQuotaReader        handler.SessionQuotaReader
 
 	// Dependencies for Anthropic Messages API (optional)
 	// When set, enables the /v1/messages endpoint for Anthropic-compatible API
@@ -172,7 +174,7 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 	// Usage endpoint for Copilot quota information
 	if deps.UsageCache != nil {
 		usageLogger := loggerinfra.ForModule("delivery.http.handler.usage")
-		usageHandler := handler.NewUsageHandler(deps.UsageCache, usageLogger)
+		usageHandler := handler.NewUsageHandler(deps.UsageCache, deps.UsageCredentialRepository, deps.SessionQuotaReader, usageLogger)
 		r.GET("/v1/internal/usage", usageHandler.ListUsages)
 	}
 

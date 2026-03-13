@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/duchoang/llmpool/internal/domain/anthropic"
+	domaincompletion "github.com/duchoang/llmpool/internal/domain/completion"
 	domainprovider "github.com/duchoang/llmpool/internal/domain/provider"
 	domainusage "github.com/duchoang/llmpool/internal/domain/usage"
 	providerinfra "github.com/duchoang/llmpool/internal/infra/provider"
@@ -138,7 +139,7 @@ func (h *MessagesHandler) CreateMessage(c *gin.Context) {
 
 	// Route to Copilot provider
 	ctx := c.Request.Context()
-	decision, err := h.router.RouteWithHint(ctx, req.Model, "copilot", nil)
+	decision, err := h.router.RouteWithHint(ctx, req.Model, "copilot", anthropicSessionQuotaMode(req), nil)
 	if err != nil {
 		h.logger.Error("routing failed", zap.Error(err))
 		h.respondError(c, http.StatusServiceUnavailable, "api_error", "no available provider: "+err.Error())
@@ -212,6 +213,21 @@ func (h *MessagesHandler) CreateMessage(c *gin.Context) {
 	} else {
 		h.handleNonStreaming(c, ctx, url, copilotBody, decision, req.Model, useMessagesAPI, useResponsesAPI, anthropicBeta)
 	}
+}
+
+func anthropicSessionQuotaMode(req anthropic.MessagesRequest) usecasecompletion.SessionQuotaMode {
+	chatReq := domaincompletion.ChatCompletionRequest{Model: req.Model}
+	for _, msg := range req.Messages {
+		switch msg.Role {
+		case "user":
+			converted := translator.ConvertAnthropicUserMessageToChat(msg)
+			chatReq.Messages = append(chatReq.Messages, converted...)
+		case "assistant":
+			converted := translator.ConvertAnthropicAssistantMessageToChat(msg)
+			chatReq.Messages = append(chatReq.Messages, converted...)
+		}
+	}
+	return usecasecompletion.SessionQuotaModeForRequest(chatReq)
 }
 
 // handleNonStreaming handles non-streaming messages requests.
@@ -738,6 +754,10 @@ func extractSSEDataFromBlock(eventBlock []byte) []byte {
 // applyCopilotHeaders applies Copilot-specific headers to the HTTP request.
 // Always sets X-Initiator: agent for all requests.
 func (h *MessagesHandler) applyCopilotHeaders(req *http.Request, decision *domainprovider.RoutingDecision) {
+	if decision == nil {
+		return
+	}
+
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+decision.Token)
@@ -750,8 +770,11 @@ func (h *MessagesHandler) applyCopilotHeaders(req *http.Request, decision *domai
 	req.Header.Set("X-Request-Id", uuid.New().String())
 	req.Header.Set("X-Vscode-User-Agent-Library-Version", "electron-fetch")
 
-	// Always set X-Initiator to "agent" for all requests
-	req.Header.Set("X-Initiator", "agent")
+	initiator := "agent"
+	if decision.Initiator == "user" {
+		initiator = "user"
+	}
+	req.Header.Set("X-Initiator", initiator)
 
 	// Apply any additional headers from routing decision
 	for k, v := range decision.Headers {

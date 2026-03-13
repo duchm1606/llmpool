@@ -64,6 +64,24 @@ func (m *mockCredentialProvider) GetToken(ctx context.Context, providerID domain
 	return m.tokens[providerID], nil
 }
 
+type mockExtendedCredentialProvider struct {
+	token string
+	meta  CredentialMetadata
+	err   error
+}
+
+func (m *mockExtendedCredentialProvider) GetToken(ctx context.Context, providerID domainprovider.ProviderID) (string, error) {
+	return m.token, m.err
+}
+
+func (m *mockExtendedCredentialProvider) GetTokenWithInfo(ctx context.Context, providerID domainprovider.ProviderID) (string, CredentialMetadata, error) {
+	return m.token, m.meta, m.err
+}
+
+func (m *mockExtendedCredentialProvider) GetTokenWithInfoForQuotaMode(ctx context.Context, providerID domainprovider.ProviderID, quotaMode SessionQuotaMode) (string, CredentialMetadata, error) {
+	return m.token, m.meta, m.err
+}
+
 func TestRouteWithHint(t *testing.T) {
 	// Setup mock registry with copilot-only runtime support
 	registry := &mockRegistry{
@@ -99,7 +117,7 @@ func TestRouteWithHint(t *testing.T) {
 	r := NewRouter(registry, healthTracker, credProvider, nil, logger)
 
 	t.Run("no hint routes to copilot", func(t *testing.T) {
-		decision, err := r.RouteWithHint(context.Background(), "gpt-5", "", nil)
+		decision, err := r.RouteWithHint(context.Background(), "gpt-5", "", SessionQuotaConsume, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -109,7 +127,7 @@ func TestRouteWithHint(t *testing.T) {
 	})
 
 	t.Run("copilot hint forces copilot provider", func(t *testing.T) {
-		decision, err := r.RouteWithHint(context.Background(), "gpt-5", "copilot", nil)
+		decision, err := r.RouteWithHint(context.Background(), "gpt-5", "copilot", SessionQuotaConsume, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -119,14 +137,14 @@ func TestRouteWithHint(t *testing.T) {
 	})
 
 	t.Run("non-copilot hint returns error", func(t *testing.T) {
-		decision, err := r.RouteWithHint(context.Background(), "gpt-5", "codex", nil)
+		decision, err := r.RouteWithHint(context.Background(), "gpt-5", "codex", SessionQuotaConsume, nil)
 		if err == nil {
 			t.Fatalf("expected error, got decision %+v", decision)
 		}
 	})
 
 	t.Run("hint for unsupported provider returns error", func(t *testing.T) {
-		_, err := r.RouteWithHint(context.Background(), "gpt-5", "openai", nil)
+		_, err := r.RouteWithHint(context.Background(), "gpt-5", "openai", SessionQuotaConsume, nil)
 		if err == nil {
 			t.Fatal("expected error for unsupported provider hint")
 		}
@@ -136,7 +154,7 @@ func TestRouteWithHint(t *testing.T) {
 		// Mark copilot as unhealthy
 		healthTracker.healthy[domainprovider.ProviderCopilot] = false
 
-		_, err := r.RouteWithHint(context.Background(), "gpt-5", "copilot", nil)
+		_, err := r.RouteWithHint(context.Background(), "gpt-5", "copilot", SessionQuotaConsume, nil)
 		if err == nil {
 			t.Fatal("expected error for unavailable provider")
 		}
@@ -151,6 +169,7 @@ func TestRouteWithHint(t *testing.T) {
 			context.Background(),
 			"gpt-5",
 			"copilot",
+			SessionQuotaConsume,
 			[]domainprovider.ProviderID{domainprovider.ProviderCopilot},
 		)
 		if err == nil {
@@ -194,6 +213,7 @@ func TestRouteWithFallback(t *testing.T) {
 		decision, err := r.RouteWithFallback(
 			context.Background(),
 			"gpt-5",
+			SessionQuotaConsume,
 			nil,
 		)
 		if err != nil {
@@ -208,6 +228,7 @@ func TestRouteWithFallback(t *testing.T) {
 		_, err := r.RouteWithFallback(
 			context.Background(),
 			"gpt-5",
+			SessionQuotaConsume,
 			[]domainprovider.ProviderID{domainprovider.ProviderCopilot},
 		)
 		if err == nil {
@@ -217,9 +238,46 @@ func TestRouteWithFallback(t *testing.T) {
 
 	t.Run("error for model with prefix slash", func(t *testing.T) {
 		// Models with "/" should be rejected (handler should parse them)
-		_, err := r.RouteWithFallback(context.Background(), "copilot/gpt-5", nil)
+		_, err := r.RouteWithFallback(context.Background(), "copilot/gpt-5", SessionQuotaConsume, nil)
 		if err == nil {
 			t.Fatal("expected error for model with prefix slash")
 		}
 	})
+}
+
+func TestRouteWithHint_PropagatesCredentialInitiator(t *testing.T) {
+	registry := &mockRegistry{
+		providers: map[domainprovider.ProviderID]*domainprovider.Provider{
+			domainprovider.ProviderCopilot: {
+				ID:       domainprovider.ProviderCopilot,
+				Name:     "Copilot",
+				Enabled:  true,
+				BaseURL:  "https://copilot.example.com",
+				AuthType: domainprovider.AuthTypeBearerPool,
+			},
+		},
+		modelIndex: map[string][]domainprovider.ProviderID{
+			"gpt-5": {domainprovider.ProviderCopilot},
+		},
+	}
+
+	healthTracker := &mockHealthTracker{healthy: map[domainprovider.ProviderID]bool{domainprovider.ProviderCopilot: true}}
+	credProvider := &mockExtendedCredentialProvider{
+		token: "copilot-token",
+		meta: CredentialMetadata{
+			CredentialID: "cred-1",
+			AccountID:    "acct-1",
+			Type:         "copilot",
+			Initiator:    "user",
+		},
+	}
+
+	r := NewRouter(registry, healthTracker, credProvider, nil, zap.NewNop())
+	decision, err := r.RouteWithHint(context.Background(), "gpt-5", "", SessionQuotaConsume, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if decision.Initiator != "user" {
+		t.Fatalf("unexpected initiator: got %q want %q", decision.Initiator, "user")
+	}
 }

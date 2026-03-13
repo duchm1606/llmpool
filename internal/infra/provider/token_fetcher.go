@@ -52,6 +52,7 @@ type PooledTokenFetcher struct {
 	repo      CredentialRepository
 	decryptor CredentialDecryptor
 	logger    *zap.Logger
+	limiter   AccountRateLimiter
 
 	// Round-robin counters per provider type
 	mu       sync.RWMutex
@@ -66,6 +67,7 @@ type PooledTokenFetcherConfig struct {
 	// OnSelection is called whenever a credential is selected for use.
 	// Use this for logging/auditing which credentials are being used.
 	OnSelection func(selection CredentialSelection)
+	Limiter     AccountRateLimiter
 }
 
 // NewPooledTokenFetcher creates a new pooled token fetcher.
@@ -79,6 +81,7 @@ func NewPooledTokenFetcher(
 		repo:        repo,
 		decryptor:   decryptor,
 		logger:      logger,
+		limiter:     config.Limiter,
 		counters:    make(map[string]*uint64),
 		onSelection: config.OnSelection,
 	}
@@ -96,6 +99,14 @@ func (f *PooledTokenFetcher) GetNextToken(ctx context.Context, providerType stri
 func (f *PooledTokenFetcher) GetNextTokenWithInfo(
 	ctx context.Context,
 	providerType string,
+) (string, usecasecompletion.CredentialMetadata, error) {
+	return f.GetNextTokenWithInfoForQuotaMode(ctx, providerType, usecasecompletion.SessionQuotaConsume)
+}
+
+func (f *PooledTokenFetcher) GetNextTokenWithInfoForQuotaMode(
+	ctx context.Context,
+	providerType string,
+	quotaMode usecasecompletion.SessionQuotaMode,
 ) (string, usecasecompletion.CredentialMetadata, error) {
 	meta := usecasecompletion.CredentialMetadata{Type: providerType}
 	// Get all enabled credentials
@@ -133,59 +144,107 @@ func (f *PooledTokenFetcher) GetNextTokenWithInfo(
 	}
 	f.mu.Unlock()
 
-	// Round-robin selection
-	idx := atomic.AddUint64(counter, 1) % uint64(len(matching))
-	selected := matching[idx]
+	poolSize := len(matching)
+	startIdx := nextRoundRobinIndex(counter, poolSize)
+	now := time.Now()
 
-	// Decrypt the credential
-	decrypted, err := f.decryptProfile(selected)
-	if err != nil {
-		f.logger.Error("failed to decrypt credential",
-			zap.String("profile_id", selected.ID),
-			zap.String("account_id", selected.AccountID),
-			zap.Error(err),
+	for offset := range matching {
+		idx := wrapRoundRobinIndex(startIdx, offset, poolSize)
+		selected := matching[idx]
+
+		rateDecision, err := f.reserveAccountLimit(ctx, providerType, selected.AccountID, now, quotaMode)
+		if err != nil {
+			f.logger.Error("failed to reserve account rate limit",
+				zap.String("provider_type", providerType),
+				zap.String("profile_id", selected.ID),
+				zap.String("account_id", selected.AccountID),
+				zap.Error(err),
+			)
+			return "", meta, err
+		}
+		if !rateDecision.Allowed {
+			f.logger.Info("credential skipped due to account rate limit",
+				zap.String("provider_type", providerType),
+				zap.String("profile_id", selected.ID),
+				zap.String("account_id", selected.AccountID),
+			)
+			continue
+		}
+
+		decrypted, err := f.decryptProfile(selected)
+		if err != nil {
+			f.logger.Error("failed to decrypt credential",
+				zap.String("profile_id", selected.ID),
+				zap.String("account_id", selected.AccountID),
+				zap.Error(err),
+			)
+			return "", meta, fmt.Errorf("decrypt credential: %w", err)
+		}
+
+		if !selected.Expired.IsZero() && now.After(selected.Expired) {
+			f.logger.Warn("selected credential is expired",
+				zap.String("profile_id", selected.ID),
+				zap.String("account_id", selected.AccountID),
+				zap.Time("expired_at", selected.Expired),
+			)
+		}
+
+		selection := CredentialSelection{
+			ProfileID:   selected.ID,
+			AccountID:   selected.AccountID,
+			ProfileType: selected.Type,
+			Email:       maskEmail(decrypted.Email),
+			SelectedAt:  now,
+		}
+
+		f.logger.Info("credential selected for request",
+			zap.String("provider_type", providerType),
+			zap.String("profile_id", selection.ProfileID),
+			zap.String("account_id", selection.AccountID),
+			zap.String("email", selection.Email),
+			zap.Int("pool_size", poolSize),
+			zap.Int("round_robin_index", idx),
+			zap.String("initiator", rateDecision.Initiator),
 		)
-		return "", meta, fmt.Errorf("decrypt credential: %w", err)
+
+		if f.onSelection != nil {
+			f.onSelection(selection)
+		}
+
+		meta.CredentialID = selected.ID
+		meta.AccountID = selected.AccountID
+		meta.Initiator = rateDecision.Initiator
+
+		return decrypted.AccessToken, meta, nil
 	}
 
-	// Check expiration from DB column (single source of truth)
-	if !selected.Expired.IsZero() && time.Now().After(selected.Expired) {
-		f.logger.Warn("selected credential is expired",
-			zap.String("profile_id", selected.ID),
-			zap.String("account_id", selected.AccountID),
-			zap.Time("expired_at", selected.Expired),
-		)
-		// Still return it - the refresh worker should handle this
-		// The upstream will reject it and we'll fallback
+	return "", meta, fmt.Errorf("no enabled credentials available within configured account rate limits for provider: %s", providerType)
+}
+
+func (f *PooledTokenFetcher) reserveAccountLimit(
+	ctx context.Context,
+	providerType, accountID string,
+	now time.Time,
+	quotaMode usecasecompletion.SessionQuotaMode,
+) (AccountRateLimitDecision, error) {
+	if f.limiter == nil {
+		return AccountRateLimitDecision{Allowed: true, Initiator: defaultAccountInitiator}, nil
 	}
+	return f.limiter.Reserve(ctx, providerType, accountID, now, quotaMode == usecasecompletion.SessionQuotaConsume)
+}
 
-	// Log the selection
-	selection := CredentialSelection{
-		ProfileID:   selected.ID,
-		AccountID:   selected.AccountID,
-		ProfileType: selected.Type,
-		Email:       maskEmail(decrypted.Email),
-		SelectedAt:  time.Now(),
+func nextRoundRobinIndex(counter *uint64, poolSize int) int {
+	if poolSize <= 0 {
+		return 0
 	}
+	return int(atomic.AddUint64(counter, 1)-1) % poolSize //nolint:gosec // bounded by modulo poolSize for slice indexing
+}
 
-	f.logger.Info("credential selected for request",
-		zap.String("provider_type", providerType),
-		zap.String("profile_id", selection.ProfileID),
-		zap.String("account_id", selection.AccountID),
-		zap.String("email", selection.Email),
-		zap.Int("pool_size", len(matching)),
-		zap.Uint64("round_robin_index", idx),
-	)
-
-	// Call selection callback if configured
-	if f.onSelection != nil {
-		f.onSelection(selection)
+func wrapRoundRobinIndex(startIdx, offset, poolSize int) int {
+	if poolSize <= 0 {
+		return 0
 	}
-
-	meta.CredentialID = selected.ID
-	meta.AccountID = selected.AccountID
-
-	return decrypted.AccessToken, meta, nil
+	return (startIdx + offset) % poolSize
 }
 
 // GetCredentialCount returns the number of enabled credentials for a provider type.

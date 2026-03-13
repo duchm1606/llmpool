@@ -9,6 +9,13 @@ import (
 	domainprovider "github.com/duchoang/llmpool/internal/domain/provider"
 )
 
+type SessionQuotaMode string
+
+const (
+	SessionQuotaConsume SessionQuotaMode = "consume"
+	SessionQuotaBypass  SessionQuotaMode = "bypass"
+)
+
 // ProviderRegistry manages provider configurations and availability.
 type ProviderRegistry interface {
 	// GetProvider returns the provider configuration by ID.
@@ -51,6 +58,7 @@ type CredentialMetadata struct {
 	CredentialID string
 	AccountID    string
 	Type         string
+	Initiator    string
 }
 
 // ExtendedCredentialProvider extends CredentialProvider with selection info.
@@ -60,6 +68,7 @@ type ExtendedCredentialProvider interface {
 
 	// GetTokenWithInfo returns a token along with credential metadata for logging.
 	GetTokenWithInfo(ctx context.Context, providerID domainprovider.ProviderID) (token string, meta CredentialMetadata, err error)
+	GetTokenWithInfoForQuotaMode(ctx context.Context, providerID domainprovider.ProviderID, quotaMode SessionQuotaMode) (token string, meta CredentialMetadata, err error)
 }
 
 // CredentialRefresher refreshes a selected credential on demand.
@@ -103,6 +112,7 @@ type Router interface {
 	RouteWithFallback(
 		ctx context.Context,
 		model string,
+		quotaMode SessionQuotaMode,
 		excludeProviders []domainprovider.ProviderID,
 	) (*domainprovider.RoutingDecision, error)
 
@@ -113,6 +123,7 @@ type Router interface {
 		ctx context.Context,
 		model string,
 		providerHint string,
+		quotaMode SessionQuotaMode,
 		excludeProviders []domainprovider.ProviderID,
 	) (*domainprovider.RoutingDecision, error)
 }

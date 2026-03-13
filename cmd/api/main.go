@@ -29,6 +29,7 @@ import (
 	usecasehealth "github.com/duchoang/llmpool/internal/usecase/health"
 	usecasequota "github.com/duchoang/llmpool/internal/usecase/quota"
 	usecaseusage "github.com/duchoang/llmpool/internal/usecase/usage"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
@@ -251,7 +252,7 @@ func main() {
 	var completionService usecasecompletion.CompletionService
 	var completionRouter usecasecompletion.Router
 	if cfg.Routing.Enabled {
-		completionService, completionRouter, providerRegistry = initCompletionService(cfg, profileRepo, encryptor, refreshService, log)
+		completionService, completionRouter, providerRegistry = initCompletionService(cfg, profileRepo, encryptor, refreshService, redisClient, log)
 		// Wire usage publisher if usage tracking is enabled
 		if usageManager != nil {
 			completionService.SetUsagePublisher(usageManager)
@@ -280,13 +281,24 @@ func main() {
 		CopilotOAuthProvider:          copilotProvider,
 		CopilotOAuthSessionTTL:        cfg.OAuth.Copilot.SessionTTL,
 		CopilotOAuthCompletionService: copilotOAuthCompletionService,
-		UsageCache:                    quotaStateCache,       // For usage endpoint
-		Router:                        completionRouter,      // For Anthropic Messages API
-		ProviderRegistry:              providerRegistry,      // For Anthropic Messages API
-		UsageStatsService:             usageStatsService,     // For usage stats dashboard
-		UsageRetentionService:         usageRetentionService, // For usage retention cleanup
-		UsagePublisher:                usageManager,          // For tracking /v1/messages requests
-		CORSConfig:                    &cfg.CORS,             // For CORS middleware
+		UsageCache:                    quotaStateCache, // For usage endpoint
+		UsageCredentialRepository:     profileRepo,     // For usage enrichment
+		SessionQuotaReader: &sessionQuotaReaderAdapter{
+			limiter: providerinfra.NewRedisAccountRateLimiter(
+				redisClient,
+				providerinfra.AccountRateLimitConfig{
+					RequestsPerMinute:       cfg.Routing.AccountRateLimit.RequestsPerMinute,
+					RequestsPer5HourSession: cfg.Routing.AccountRateLimit.RequestsPer5HourSession,
+				},
+				loggerinfra.ForModule("infra.provider.account_rate_limiter"),
+			),
+		},
+		Router:                completionRouter,      // For Anthropic Messages API
+		ProviderRegistry:      providerRegistry,      // For Anthropic Messages API
+		UsageStatsService:     usageStatsService,     // For usage stats dashboard
+		UsageRetentionService: usageRetentionService, // For usage retention cleanup
+		UsagePublisher:        usageManager,          // For tracking /v1/messages requests
+		CORSConfig:            &cfg.CORS,             // For CORS middleware
 	})
 
 	httpServer := server.NewHTTPServer(cfg.Server, router)
@@ -352,6 +364,17 @@ func main() {
 	log.Info("server shutdown complete")
 }
 
+type sessionQuotaReaderAdapter struct {
+	limiter providerinfra.AccountRateLimiter
+}
+
+func (a *sessionQuotaReaderAdapter) GetUsage(ctx context.Context, providerType, accountID string) (*domainquota.SessionQuotaUsage, error) {
+	if a == nil || a.limiter == nil {
+		return nil, nil
+	}
+	return a.limiter.GetUsage(ctx, providerType, accountID, time.Now())
+}
+
 // initCompletionService initializes the completion routing service.
 // Returns the completion service, router, and provider registry.
 func initCompletionService(
@@ -359,6 +382,7 @@ func initCompletionService(
 	credRepo providerinfra.CredentialRepository,
 	decryptor providerinfra.CredentialDecryptor,
 	refreshService usecasecredential.RefreshService,
+	redisClient *redis.Client,
 	log *loggerinfra.Logger,
 ) (usecasecompletion.CompletionService, usecasecompletion.Router, usecasecompletion.ProviderRegistry) {
 	// Create pooled token fetcher for credential selection
@@ -372,6 +396,14 @@ func initCompletionService(
 				zap.String("profile_type", selection.ProfileType),
 			)
 		},
+		Limiter: providerinfra.NewRedisAccountRateLimiter(
+			redisClient,
+			providerinfra.AccountRateLimitConfig{
+				RequestsPerMinute:       cfg.Routing.AccountRateLimit.RequestsPerMinute,
+				RequestsPer5HourSession: cfg.Routing.AccountRateLimit.RequestsPer5HourSession,
+			},
+			loggerinfra.ForModule("infra.provider.account_rate_limiter"),
+		),
 	}
 	tokenFetcher := providerinfra.NewPooledTokenFetcher(credRepo, decryptor, tokenFetcherLogger, tokenFetcherConfig)
 

@@ -1073,9 +1073,7 @@ func applyCopilotHeaders(req *http.Request, decision domainprovider.RoutingDecis
 	req.Header.Set("X-Request-Id", uuid.New().String())
 	req.Header.Set("X-Vscode-User-Agent-Library-Version", "electron-fetch")
 
-	// Always set X-Initiator to "agent" for all requests
-	// This enables full agent capabilities regardless of message content
-	req.Header.Set("X-Initiator", "agent")
+	req.Header.Set("X-Initiator", resolveCopilotInitiator(decision.Initiator))
 
 	// Set vision header if needed
 	if enableVision {
@@ -1086,6 +1084,13 @@ func applyCopilotHeaders(req *http.Request, decision domainprovider.RoutingDecis
 	for k, v := range decision.Headers {
 		req.Header.Set(k, v)
 	}
+}
+
+func resolveCopilotInitiator(initiator string) string {
+	if strings.EqualFold(strings.TrimSpace(initiator), userAccountInitiator) {
+		return userAccountInitiator
+	}
+	return defaultAccountInitiator
 }
 
 // hasVisionContent checks if any message in the request contains image_url content.

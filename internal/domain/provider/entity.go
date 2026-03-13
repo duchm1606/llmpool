@@ -95,4 +95,5 @@ type RoutingDecision struct {
 	CredentialID        string // Profile ID used
 	CredentialType      string // Provider type (e.g., "codex", "copilot")
 	CredentialAccountID string // Provider account id for upstream headers/logs
+	Initiator           string // Upstream initiator hint (e.g., "agent", "user")
 }
