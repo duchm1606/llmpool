@@ -312,7 +312,7 @@ type ParsedModel struct {
 //   - "copilot/gpt-5.3-codex"   -> Force copilot provider
 //   - "codex/gpt-5"             -> Force codex provider
 //
-// Known provider prefixes: codex, copilot, openai, anthropic
+// Known provider prefixes: copilot
 func ParseModelWithProvider(model string) ParsedModel {
 	result := ParsedModel{
 		Original: model,
@@ -346,7 +346,7 @@ func ParseModelWithProvider(model string) ParsedModel {
 // isKnownProvider checks if a string is a known provider ID.
 func isKnownProvider(s string) bool {
 	switch s {
-	case "codex", "copilot", "openai", "anthropic":
+	case "copilot":
 		return true
 	default:
 		return false

@@ -159,13 +159,14 @@ func (m *mockSessionStore) GetStatus(_ context.Context, sessionID string) (domai
 	return session, nil
 }
 
-func (m *mockSessionStore) MarkComplete(_ context.Context, sessionID string, accountID string) error {
+func (m *mockSessionStore) MarkComplete(_ context.Context, sessionID string, summary domainoauth.ConnectionSummary) error {
 	if m.err != nil {
 		return m.err
 	}
 	if session, ok := m.sessions[sessionID]; ok {
 		session.State = domainoauth.StateOK
-		session.AccountID = accountID
+		session.AccountID = summary.AccountID
+		session.Connection = &summary
 		session.CompletedAt = &time.Time{}
 		m.sessions[sessionID] = session
 	}

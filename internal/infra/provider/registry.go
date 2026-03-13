@@ -54,16 +54,22 @@ func NewRegistry(config RegistryConfig) usecasecompletion.ProviderRegistry {
 	if len(r.priority) == 0 {
 		r.priority = domainprovider.DefaultPriority
 	}
+	r.priority = filterActiveProviders(r.priority)
 
 	// Register providers
 	for _, pc := range config.Providers {
+		providerID := domainprovider.ProviderID(pc.ID)
+		if !isActiveRuntimeProvider(providerID) {
+			continue
+		}
+
 		baseURL := pc.BaseURL
 		if pc.ID == "copilot" && strings.TrimSpace(baseURL) == "" {
 			baseURL = CopilotBaseURLForAccountType("individual")
 		}
 
 		provider := &domainprovider.Provider{
-			ID:       domainprovider.ProviderID(pc.ID),
+			ID:       providerID,
 			Name:     pc.Name,
 			Enabled:  pc.Enabled,
 			BaseURL:  baseURL,
@@ -177,4 +183,36 @@ func (r *registry) GetAllModels() []domaincompletion.Model {
 	}
 
 	return models
+}
+
+func filterActiveProviders(providerIDs []domainprovider.ProviderID) []domainprovider.ProviderID {
+	filtered := make([]domainprovider.ProviderID, 0, len(providerIDs))
+	seen := make(map[domainprovider.ProviderID]struct{}, len(providerIDs))
+
+	for _, providerID := range providerIDs {
+		if !isActiveRuntimeProvider(providerID) {
+			continue
+		}
+		if _, ok := seen[providerID]; ok {
+			continue
+		}
+		seen[providerID] = struct{}{}
+		filtered = append(filtered, providerID)
+	}
+
+	if len(filtered) > 0 {
+		return filtered
+	}
+
+	return append([]domainprovider.ProviderID(nil), domainprovider.ActiveRuntimeProviders...)
+}
+
+func isActiveRuntimeProvider(providerID domainprovider.ProviderID) bool {
+	for _, activeProviderID := range domainprovider.ActiveRuntimeProviders {
+		if providerID == activeProviderID {
+			return true
+		}
+	}
+
+	return false
 }

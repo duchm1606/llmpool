@@ -1,16 +1,11 @@
 package handler
 
 import (
-	"context"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/duchoang/llmpool/internal/delivery/http/middleware"
-	domaincredential "github.com/duchoang/llmpool/internal/domain/credential"
-	domainoauth "github.com/duchoang/llmpool/internal/domain/oauth"
 	loggerinfra "github.com/duchoang/llmpool/internal/infra/logger"
-	usecasecredential "github.com/duchoang/llmpool/internal/usecase/credential"
 	usecaseoauth "github.com/duchoang/llmpool/internal/usecase/oauth"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -20,35 +15,16 @@ var copilotOAuthLog = loggerinfra.ForModuleLazy("delivery.http.handler.copilot_o
 
 // CopilotOAuthHandler handles Copilot OAuth flow endpoints.
 type CopilotOAuthHandler struct {
-	provider          usecaseoauth.OAuthProvider
-	completionService usecasecredential.OAuthCompletionService
-	sessionStore      usecaseoauth.OAuthSessionStore
-	sessionTTL        time.Duration
+	deviceFlow usecaseoauth.DeviceFlowCoordinator
 }
 
 // NewCopilotOAuthHandler creates a new Copilot OAuth handler.
 func NewCopilotOAuthHandler(
-	provider usecaseoauth.OAuthProvider,
-	sessionStore usecaseoauth.OAuthSessionStore,
-	sessionTTL time.Duration,
-	completionService usecasecredential.OAuthCompletionService,
+	deviceFlow usecaseoauth.DeviceFlowCoordinator,
 ) *CopilotOAuthHandler {
-	if completionService == nil {
-		completionService = noopCopilotOAuthCompletionService{}
-	}
-
 	return &CopilotOAuthHandler{
-		provider:          provider,
-		completionService: completionService,
-		sessionStore:      sessionStore,
-		sessionTTL:        sessionTTL,
+		deviceFlow: deviceFlow,
 	}
-}
-
-type noopCopilotOAuthCompletionService struct{}
-
-func (noopCopilotOAuthCompletionService) CompleteOAuth(_ context.Context, accountID string, _ domainoauth.TokenPayload) (domaincredential.Profile, error) {
-	return domaincredential.Profile{AccountID: accountID}, nil
 }
 
 // StartDeviceFlow handles device authorization flow initiation: POST /v1/internal/oauth/copilot-device-code
@@ -56,8 +32,7 @@ func (h *CopilotOAuthHandler) StartDeviceFlow(c *gin.Context) {
 	ctx := c.Request.Context()
 	requestID := middleware.GetRequestID(c)
 
-	// Start device flow with provider
-	deviceResp, err := h.provider.StartDeviceFlow(ctx)
+	deviceResp, err := h.deviceFlow.StartDeviceFlow(ctx)
 	if err != nil {
 		copilotOAuthLog.Error("copilot device flow start failed",
 			zap.String("request_id", requestID),
@@ -66,31 +41,6 @@ func (h *CopilotOAuthHandler) StartDeviceFlow(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "failed to start device flow",
-		})
-		return
-	}
-
-	// Create pending session in Redis
-	session := domainoauth.OAuthSession{
-		SessionID:       deviceResp.DeviceCode,
-		State:           domainoauth.StatePending,
-		Provider:        "copilot",
-		Expiry:          time.Now().Add(time.Duration(deviceResp.ExpiresIn) * time.Second),
-		CreatedAt:       time.Now(),
-		DeviceCode:      deviceResp.DeviceCode,
-		UserCode:        deviceResp.UserCode,
-		VerificationURI: deviceResp.VerificationURI,
-		Interval:        deviceResp.Interval,
-	}
-
-	if err := h.sessionStore.CreatePending(ctx, session); err != nil {
-		copilotOAuthLog.Error("copilot device flow session creation failed",
-			zap.String("request_id", requestID),
-			zap.Error(err),
-		)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "failed to create session",
 		})
 		return
 	}
@@ -116,7 +66,7 @@ func (h *CopilotOAuthHandler) StartDeviceFlow(c *gin.Context) {
 func (h *CopilotOAuthHandler) GetDeviceStatus(c *gin.Context) {
 	ctx := c.Request.Context()
 	requestID := middleware.GetRequestID(c)
-	deviceCode := c.Query("device_code")
+	deviceCode := strings.TrimSpace(c.Query("device_code"))
 
 	if deviceCode == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -126,112 +76,60 @@ func (h *CopilotOAuthHandler) GetDeviceStatus(c *gin.Context) {
 		return
 	}
 
-	// Try to get tokens from device flow
-	tokenPayload, err := h.provider.PollDevice(ctx, deviceCode)
+	status, err := h.deviceFlow.GetDeviceStatus(ctx, deviceCode)
 	if err != nil {
-		// Check if it's a polling error (authorization_pending, slow_down, expired_token)
-		errMsg := err.Error()
-		if errMsg == "authorization pending" {
-			c.JSON(http.StatusOK, gin.H{"status": "wait"})
-			return
-		}
-		if errMsg == "slow down" {
-			c.JSON(http.StatusOK, gin.H{"status": "wait", "slow_down": true})
-			return
-		}
-		if errMsg == "expired token" {
-			c.JSON(http.StatusOK, gin.H{
-				"status":     "error",
-				"error_code": "expired_token",
-			})
-			return
-		}
-		if strings.Contains(errMsg, "access denied") {
-			c.JSON(http.StatusOK, gin.H{
-				"status":     "error",
-				"error_code": "access_denied",
-			})
-			return
-		}
-		if strings.Contains(errMsg, "forbidden") || strings.Contains(errMsg, "subscription") {
-			copilotOAuthLog.Warn("copilot access forbidden - likely no subscription",
-				zap.String("request_id", requestID),
-				zap.Error(err),
-			)
-			c.JSON(http.StatusOK, gin.H{
-				"status":        "error",
-				"error_code":    "no_subscription",
-				"error_message": "GitHub Copilot subscription required",
-			})
-			return
-		}
-
-		copilotOAuthLog.Error("copilot device poll failed",
+		copilotOAuthLog.Error("copilot device status lookup failed",
 			zap.String("request_id", requestID),
 			zap.String("device_code", deviceCode),
 			zap.Error(err),
 		)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "failed to poll device",
+			"error":  "failed to get device flow status",
 		})
 		return
 	}
 
-	// Validate account ID
-	accountID := strings.TrimSpace(tokenPayload.AccountID)
-	if accountID == "" {
-		copilotOAuthLog.Error("copilot device poll missing account identity",
+	if status == nil {
+		c.JSON(http.StatusOK, gin.H{"status": "wait"})
+		return
+	}
+
+	switch status.State {
+	case "pending":
+		c.JSON(http.StatusOK, gin.H{"status": "wait"})
+	case "ok":
+		response := gin.H{"status": "ok", "account_id": status.AccountID}
+		if status.Connection != nil {
+			response["connection"] = gin.H{
+				"id":              status.Connection.ID,
+				"account_id":      status.Connection.AccountID,
+				"email":           status.Connection.Email,
+				"provider":        status.Connection.Provider,
+				"expires_at":      status.Connection.ExpiresAt,
+				"last_refresh_at": status.Connection.LastRefreshAt,
+				"enabled":         status.Connection.Enabled,
+			}
+		}
+		c.JSON(http.StatusOK, response)
+	case "error":
+		response := gin.H{
+			"status":     "error",
+			"error_code": status.ErrorCode,
+		}
+		if status.ErrorMessage != "" {
+			response["error_message"] = status.ErrorMessage
+		}
+		c.JSON(http.StatusOK, response)
+	default:
+		copilotOAuthLog.Error("copilot device flow returned unknown state",
 			zap.String("request_id", requestID),
 			zap.String("device_code", deviceCode),
+			zap.String("state", string(status.State)),
 		)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "missing account identifier",
+			"error":  "unknown device flow status",
 		})
-		return
 	}
-
-	// Complete OAuth flow - persist credentials
-	newProfile, err := h.completionService.CompleteOAuth(ctx, accountID, tokenPayload)
-	if err != nil {
-		copilotOAuthLog.Error("copilot oauth completion failed",
-			zap.String("request_id", requestID),
-			zap.String("device_code", deviceCode),
-			zap.String("account_id", accountID),
-			zap.Error(err),
-		)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "failed to persist credentials",
-		})
-		return
-	}
-
-	// Mark session as complete
-	if err := h.sessionStore.MarkComplete(ctx, deviceCode, newProfile.AccountID); err != nil {
-		copilotOAuthLog.Error("copilot session mark complete failed",
-			zap.String("request_id", requestID),
-			zap.String("device_code", deviceCode),
-			zap.String("account_id", newProfile.AccountID),
-			zap.Error(err),
-		)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "failed to complete session",
-		})
-		return
-	}
-
-	copilotOAuthLog.Info("copilot device flow completed",
-		zap.String("request_id", requestID),
-		zap.String("device_code", deviceCode),
-		zap.String("account_id", newProfile.AccountID),
-	)
-
-	// Return success response
-	c.JSON(http.StatusOK, gin.H{
-		"status":     "ok",
-		"account_id": newProfile.AccountID,
-	})
 }

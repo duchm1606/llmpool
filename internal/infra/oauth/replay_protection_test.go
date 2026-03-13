@@ -144,13 +144,14 @@ func TestReplayProtection_TTLExpiry(t *testing.T) {
 	ctx := context.Background()
 	sessionID := "test_session_ttl_expiry"
 
-	// Create a session
+	// Create a session with a short per-session expiry so CreatePending
+	// uses the intended effective TTL.
 	session := domainoauth.OAuthSession{
 		SessionID:    sessionID,
 		State:        domainoauth.StatePending,
 		PKCEVerifier: "test_verifier",
 		Provider:     "codex",
-		Expiry:       time.Now().Add(10 * time.Minute),
+		Expiry:       time.Now().Add(1 * time.Second),
 		CreatedAt:    time.Now(),
 	}
 
@@ -300,7 +301,7 @@ func TestSecurityAudit_MarkCompletePreservesTTL(t *testing.T) {
 	mr.FastForward(2 * time.Second)
 
 	// Mark complete (should preserve remaining TTL)
-	err = store.MarkComplete(ctx, sessionID, "account_123")
+	err = store.MarkComplete(ctx, sessionID, domainoauth.ConnectionSummary{AccountID: "account_123"})
 	require.NoError(t, err)
 
 	// Verify session still exists and was updated
@@ -308,4 +309,6 @@ func TestSecurityAudit_MarkCompletePreservesTTL(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, domainoauth.StateOK, updated.State)
 	require.Equal(t, "account_123", updated.AccountID)
+	require.NotNil(t, updated.Connection)
+	require.Equal(t, "account_123", updated.Connection.AccountID)
 }

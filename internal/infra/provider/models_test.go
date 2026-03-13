@@ -11,23 +11,8 @@ func TestProviderModels(t *testing.T) {
 		wantModels   bool
 	}{
 		{
-			name:         "codex provider has models",
-			providerType: "codex",
-			wantModels:   true,
-		},
-		{
 			name:         "copilot provider has models",
 			providerType: "copilot",
-			wantModels:   true,
-		},
-		{
-			name:         "openai provider has models",
-			providerType: "openai",
-			wantModels:   true,
-		},
-		{
-			name:         "anthropic provider has models",
-			providerType: "anthropic",
 			wantModels:   true,
 		},
 		{
@@ -48,8 +33,8 @@ func TestProviderModels(t *testing.T) {
 	}
 }
 
-func TestCodexModelsIncludeGPT5(t *testing.T) {
-	models := GetModelsForProvider("codex")
+func TestCopilotModelsIncludeGPT5(t *testing.T) {
+	models := GetModelsForProvider("copilot")
 	found := false
 	for _, m := range models {
 		if m == "gpt-5" {
@@ -58,12 +43,12 @@ func TestCodexModelsIncludeGPT5(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("codex provider should include gpt-5 model")
+		t.Error("copilot provider should include gpt-5 model")
 	}
 }
 
-func TestCodexModelsIncludeGPT4o(t *testing.T) {
-	models := GetModelsForProvider("codex")
+func TestCopilotModelsIncludeGPT4o(t *testing.T) {
+	models := GetModelsForProvider("copilot")
 	found := false
 	for _, m := range models {
 		if m == "gpt-4o" {
@@ -72,7 +57,7 @@ func TestCodexModelsIncludeGPT4o(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("codex provider should include gpt-4o model")
+		t.Error("copilot provider should include gpt-4o model")
 	}
 }
 
@@ -105,14 +90,11 @@ func TestIsModelSupportedByProvider(t *testing.T) {
 		providerType string
 		expected     bool
 	}{
-		{"gpt-5", "codex", true},
-		{"gpt-4o", "codex", true},
 		{"gpt-4o", "copilot", true},
-		{"gpt4o", "codex", true}, // Alias
-		{"gpt5", "codex", true},  // Alias
-		{"claude-3-5-sonnet-20241022", "anthropic", true},
-		{"gpt-5", "anthropic", false},
-		{"unknown-model", "codex", false},
+		{"gpt4o", "copilot", true}, // Alias
+		{"gpt5", "copilot", true},  // Alias
+		{"claude-sonnet-4.5", "copilot", true},
+		{"unknown-model", "copilot", false},
 	}
 
 	for _, tt := range tests {
@@ -174,25 +156,25 @@ func TestParseModelWithProvider(t *testing.T) {
 			wantModel:    "gpt-5.3-codex",
 			wantOriginal: "copilot/gpt-5.3-codex",
 		},
+		// Unknown prefix - not treated as provider
 		{
 			input:        "codex/gpt-5",
-			wantProvider: "codex",
-			wantModel:    "gpt-5",
+			wantProvider: "",
+			wantModel:    "codex/gpt-5",
 			wantOriginal: "codex/gpt-5",
 		},
 		{
 			input:        "openai/gpt-4o",
-			wantProvider: "openai",
-			wantModel:    "gpt-4o",
+			wantProvider: "",
+			wantModel:    "openai/gpt-4o",
 			wantOriginal: "openai/gpt-4o",
 		},
 		{
 			input:        "anthropic/claude-3-opus",
-			wantProvider: "anthropic",
-			wantModel:    "claude-3-opus",
+			wantProvider: "",
+			wantModel:    "anthropic/claude-3-opus",
 			wantOriginal: "anthropic/claude-3-opus",
 		},
-		// Unknown prefix - not treated as provider
 		{
 			input:        "unknown/some-model",
 			wantProvider: "",
@@ -231,12 +213,19 @@ func TestParseModelWithProvider(t *testing.T) {
 }
 
 func TestIsKnownProvider(t *testing.T) {
-	known := []string{"codex", "copilot", "openai", "anthropic"}
+	known := []string{"copilot"}
+	notSupported := []string{"codex", "openai", "anthropic"}
 	unknown := []string{"unknown", "google", "azure", ""}
 
 	for _, p := range known {
 		if !isKnownProvider(p) {
 			t.Errorf("isKnownProvider(%q) = false, want true", p)
+		}
+	}
+
+	for _, p := range notSupported {
+		if isKnownProvider(p) {
+			t.Errorf("isKnownProvider(%q) = true, want false", p)
 		}
 	}
 
@@ -248,31 +237,31 @@ func TestIsKnownProvider(t *testing.T) {
 }
 
 func TestGetProviderPrefixedModels(t *testing.T) {
-	prefixedModels := GetProviderPrefixedModels("codex")
+	prefixedModels := GetProviderPrefixedModels("copilot")
 	if len(prefixedModels) == 0 {
-		t.Fatal("expected prefixed models for codex provider")
+		t.Fatal("expected prefixed models for copilot provider")
 	}
 
 	// Check that all models are properly prefixed
 	for _, m := range prefixedModels {
-		if len(m) <= len("codex/") {
-			t.Errorf("expected model to be prefixed with 'codex/', got %q", m)
+		if len(m) <= len("copilot/") {
+			t.Errorf("expected model to be prefixed with 'copilot/', got %q", m)
 		}
-		if m[:6] != "codex/" {
-			t.Errorf("expected model to start with 'codex/', got %q", m)
+		if m[:8] != "copilot/" {
+			t.Errorf("expected model to start with 'copilot/', got %q", m)
 		}
 	}
 
 	// Check one known model is present
 	found := false
 	for _, m := range prefixedModels {
-		if m == "codex/gpt-5" {
+		if m == "copilot/gpt-5" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("expected 'codex/gpt-5' to be in prefixed models")
+		t.Error("expected 'copilot/gpt-5' to be in prefixed models")
 	}
 }
 

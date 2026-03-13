@@ -46,7 +46,15 @@ func (s *RedisSessionStore) CreatePending(ctx context.Context, session domainoau
 		return fmt.Errorf("marshal session: %w", err)
 	}
 
-	if err := s.client.Set(ctx, key, data, s.ttl).Err(); err != nil {
+	ttl := s.ttl
+	if !session.Expiry.IsZero() {
+		remaining := time.Until(session.Expiry)
+		if remaining > 0 {
+			ttl = remaining
+		}
+	}
+
+	if err := s.client.Set(ctx, key, data, ttl).Err(); err != nil {
 		return fmt.Errorf("store session: %w", err)
 	}
 
@@ -74,7 +82,7 @@ func (s *RedisSessionStore) GetStatus(ctx context.Context, sessionID string) (do
 }
 
 // MarkComplete marks session as successfully completed with account ID
-func (s *RedisSessionStore) MarkComplete(ctx context.Context, sessionID string, accountID string) error {
+func (s *RedisSessionStore) MarkComplete(ctx context.Context, sessionID string, summary domainoauth.ConnectionSummary) error {
 	session, err := s.GetStatus(ctx, sessionID)
 	if err != nil {
 		return err
@@ -82,7 +90,8 @@ func (s *RedisSessionStore) MarkComplete(ctx context.Context, sessionID string, 
 
 	now := time.Now()
 	session.State = domainoauth.StateOK
-	session.AccountID = accountID
+	session.AccountID = summary.AccountID
+	session.Connection = &summary
 	session.CompletedAt = &now
 
 	return s.updateSession(ctx, sessionID, session)

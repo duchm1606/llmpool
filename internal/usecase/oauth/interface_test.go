@@ -44,7 +44,8 @@ func (m *mockOAuthSessionStore) GetStatus(ctx context.Context, sessionID string)
 	return domainoauth.OAuthSession{}, nil
 }
 
-func (m *mockOAuthSessionStore) MarkComplete(ctx context.Context, sessionID string, accountID string) error {
+func (m *mockOAuthSessionStore) MarkComplete(ctx context.Context, sessionID string, summary domainoauth.ConnectionSummary) error {
+	_ = summary
 	return nil
 }
 

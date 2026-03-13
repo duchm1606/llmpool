@@ -65,16 +65,9 @@ func (m *mockCredentialProvider) GetToken(ctx context.Context, providerID domain
 }
 
 func TestRouteWithHint(t *testing.T) {
-	// Setup mock registry with codex and copilot both supporting gpt-5
+	// Setup mock registry with copilot-only runtime support
 	registry := &mockRegistry{
 		providers: map[domainprovider.ProviderID]*domainprovider.Provider{
-			domainprovider.ProviderCodex: {
-				ID:       domainprovider.ProviderCodex,
-				Name:     "Codex",
-				Enabled:  true,
-				BaseURL:  "https://codex.example.com",
-				AuthType: domainprovider.AuthTypeBearerPool,
-			},
 			domainprovider.ProviderCopilot: {
 				ID:       domainprovider.ProviderCopilot,
 				Name:     "Copilot",
@@ -84,21 +77,19 @@ func TestRouteWithHint(t *testing.T) {
 			},
 		},
 		modelIndex: map[string][]domainprovider.ProviderID{
-			"gpt-5": {domainprovider.ProviderCodex, domainprovider.ProviderCopilot},
-			"gpt-4": {domainprovider.ProviderCodex},
+			"gpt-5": {domainprovider.ProviderCopilot},
+			"gpt-4": {domainprovider.ProviderCopilot},
 		},
 	}
 
 	healthTracker := &mockHealthTracker{
 		healthy: map[domainprovider.ProviderID]bool{
-			domainprovider.ProviderCodex:   true,
 			domainprovider.ProviderCopilot: true,
 		},
 	}
 
 	credProvider := &mockCredentialProvider{
 		tokens: map[domainprovider.ProviderID]string{
-			domainprovider.ProviderCodex:   "codex-token",
 			domainprovider.ProviderCopilot: "copilot-token",
 		},
 	}
@@ -107,14 +98,13 @@ func TestRouteWithHint(t *testing.T) {
 
 	r := NewRouter(registry, healthTracker, credProvider, nil, logger)
 
-	t.Run("no hint routes by priority", func(t *testing.T) {
+	t.Run("no hint routes to copilot", func(t *testing.T) {
 		decision, err := r.RouteWithHint(context.Background(), "gpt-5", "", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// Codex is first in priority, should be selected
-		if decision.ProviderID != domainprovider.ProviderCodex {
-			t.Errorf("expected codex provider, got %s", decision.ProviderID)
+		if decision.ProviderID != domainprovider.ProviderCopilot {
+			t.Errorf("expected copilot provider, got %s", decision.ProviderID)
 		}
 	})
 
@@ -128,19 +118,15 @@ func TestRouteWithHint(t *testing.T) {
 		}
 	})
 
-	t.Run("codex hint forces codex provider", func(t *testing.T) {
+	t.Run("non-copilot hint returns error", func(t *testing.T) {
 		decision, err := r.RouteWithHint(context.Background(), "gpt-5", "codex", nil)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if decision.ProviderID != domainprovider.ProviderCodex {
-			t.Errorf("expected codex provider, got %s", decision.ProviderID)
+		if err == nil {
+			t.Fatalf("expected error, got decision %+v", decision)
 		}
 	})
 
 	t.Run("hint for unsupported provider returns error", func(t *testing.T) {
-		// gpt-4 is only supported by codex
-		_, err := r.RouteWithHint(context.Background(), "gpt-4", "copilot", nil)
+		_, err := r.RouteWithHint(context.Background(), "gpt-5", "openai", nil)
 		if err == nil {
 			t.Fatal("expected error for unsupported provider hint")
 		}
@@ -176,13 +162,6 @@ func TestRouteWithHint(t *testing.T) {
 func TestRouteWithFallback(t *testing.T) {
 	registry := &mockRegistry{
 		providers: map[domainprovider.ProviderID]*domainprovider.Provider{
-			domainprovider.ProviderCodex: {
-				ID:       domainprovider.ProviderCodex,
-				Name:     "Codex",
-				Enabled:  true,
-				BaseURL:  "https://codex.example.com",
-				AuthType: domainprovider.AuthTypeBearerPool,
-			},
 			domainprovider.ProviderCopilot: {
 				ID:       domainprovider.ProviderCopilot,
 				Name:     "Copilot",
@@ -192,20 +171,18 @@ func TestRouteWithFallback(t *testing.T) {
 			},
 		},
 		modelIndex: map[string][]domainprovider.ProviderID{
-			"gpt-5": {domainprovider.ProviderCodex, domainprovider.ProviderCopilot},
+			"gpt-5": {domainprovider.ProviderCopilot},
 		},
 	}
 
 	healthTracker := &mockHealthTracker{
 		healthy: map[domainprovider.ProviderID]bool{
-			domainprovider.ProviderCodex:   true,
 			domainprovider.ProviderCopilot: true,
 		},
 	}
 
 	credProvider := &mockCredentialProvider{
 		tokens: map[domainprovider.ProviderID]string{
-			domainprovider.ProviderCodex:   "codex-token",
 			domainprovider.ProviderCopilot: "copilot-token",
 		},
 	}
@@ -213,29 +190,28 @@ func TestRouteWithFallback(t *testing.T) {
 	logger := zap.NewNop()
 	r := NewRouter(registry, healthTracker, credProvider, nil, logger)
 
-	t.Run("fallback to next provider when first is excluded", func(t *testing.T) {
+	t.Run("returns copilot when no exclusions", func(t *testing.T) {
 		decision, err := r.RouteWithFallback(
 			context.Background(),
 			"gpt-5",
-			[]domainprovider.ProviderID{domainprovider.ProviderCodex},
+			nil,
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// Codex excluded, should fall back to copilot
 		if decision.ProviderID != domainprovider.ProviderCopilot {
-			t.Errorf("expected copilot provider after fallback, got %s", decision.ProviderID)
+			t.Errorf("expected copilot provider, got %s", decision.ProviderID)
 		}
 	})
 
-	t.Run("error when all providers excluded", func(t *testing.T) {
+	t.Run("error when copilot excluded", func(t *testing.T) {
 		_, err := r.RouteWithFallback(
 			context.Background(),
 			"gpt-5",
-			[]domainprovider.ProviderID{domainprovider.ProviderCodex, domainprovider.ProviderCopilot},
+			[]domainprovider.ProviderID{domainprovider.ProviderCopilot},
 		)
 		if err == nil {
-			t.Fatal("expected error when all providers excluded")
+			t.Fatal("expected error when copilot excluded")
 		}
 	})
 

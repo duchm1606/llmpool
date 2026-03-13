@@ -14,13 +14,15 @@ const (
 	ProviderAnthropic ProviderID = "anthropic"
 )
 
+// ActiveRuntimeProviders defines the providers supported by the personal-use runtime.
+var ActiveRuntimeProviders = []ProviderID{
+	ProviderCopilot,
+}
+
 // DefaultPriority defines the default provider priority order.
 // Higher priority providers are tried first.
 var DefaultPriority = []ProviderID{
-	ProviderCodex,
 	ProviderCopilot,
-	ProviderOpenAI,
-	ProviderAnthropic,
 }
 
 // Provider represents an LLM provider configuration.

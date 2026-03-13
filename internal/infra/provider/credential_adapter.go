@@ -126,16 +126,10 @@ func (cp *credentialProvider) GetTokenWithInfo(
 // mapProviderToCredentialType maps provider IDs to credential types used by the pool.
 func mapProviderToCredentialType(providerID domainprovider.ProviderID) string {
 	switch providerID {
-	case domainprovider.ProviderCodex:
-		return "codex"
 	case domainprovider.ProviderCopilot:
 		return "copilot"
-	case domainprovider.ProviderOpenAI:
-		return "openai"
-	case domainprovider.ProviderAnthropic:
-		return "anthropic"
 	default:
-		return string(providerID)
+		return ""
 	}
 }
 

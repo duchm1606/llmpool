@@ -80,7 +80,7 @@ func TestMarkComplete(t *testing.T) {
 	require.NoError(t, err)
 
 	// Mark as complete
-	err = store.MarkComplete(ctx, session.SessionID, "account-789")
+	err = store.MarkComplete(ctx, session.SessionID, domainoauth.ConnectionSummary{AccountID: "account-789"})
 	require.NoError(t, err)
 
 	// Verify state change
@@ -88,6 +88,8 @@ func TestMarkComplete(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, domainoauth.StateOK, retrieved.State)
 	assert.Equal(t, "account-789", retrieved.AccountID)
+	require.NotNil(t, retrieved.Connection)
+	assert.Equal(t, "account-789", retrieved.Connection.AccountID)
 	assert.NotNil(t, retrieved.CompletedAt)
 }
 
@@ -211,7 +213,7 @@ func TestStateTransitions(t *testing.T) {
 			name:         "pending to ok",
 			initialState: domainoauth.StatePending,
 			operation: func(sessionID string) error {
-				return store.MarkComplete(ctx, sessionID, "account-success")
+				return store.MarkComplete(ctx, sessionID, domainoauth.ConnectionSummary{AccountID: "account-success"})
 			},
 			expectedState:  domainoauth.StateOK,
 			checkAccountID: true,
@@ -286,7 +288,7 @@ func TestUpdateSessionPreservesTTL(t *testing.T) {
 	mr.FastForward(5 * time.Minute)
 
 	// Mark as complete (should preserve remaining TTL)
-	err = store.MarkComplete(ctx, session.SessionID, "account-ttl-test")
+	err = store.MarkComplete(ctx, session.SessionID, domainoauth.ConnectionSummary{AccountID: "account-ttl-test"})
 	require.NoError(t, err)
 
 	// Session should still exist

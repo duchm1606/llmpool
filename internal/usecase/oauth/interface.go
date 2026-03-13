@@ -32,14 +32,20 @@ type OAuthSessionStore interface {
 	// GetStatus retrieves current session status
 	GetStatus(ctx context.Context, sessionID string) (domainoauth.OAuthSession, error)
 
-	// MarkComplete marks session as successfully completed with account ID
-	MarkComplete(ctx context.Context, sessionID string, accountID string) error
+	// MarkComplete marks session as successfully completed with a non-sensitive connection summary.
+	MarkComplete(ctx context.Context, sessionID string, summary domainoauth.ConnectionSummary) error
 
 	// MarkError marks session as failed with error details
 	MarkError(ctx context.Context, sessionID string, errorCode string, errorMessage string) error
 
 	// Consume retrieves and deletes a session (one-time use)
 	Consume(ctx context.Context, sessionID string) (domainoauth.OAuthSession, error)
+}
+
+// DeviceFlowCoordinator defines personal-use device-flow orchestration APIs.
+type DeviceFlowCoordinator interface {
+	StartDeviceFlow(ctx context.Context) (domainoauth.DeviceFlowResponse, error)
+	GetDeviceStatus(ctx context.Context, deviceCode string) (*domainoauth.OAuthSession, error)
 }
 
 // OAuthCompletionHandler defines the contract for handling OAuth completion

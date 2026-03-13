@@ -167,7 +167,7 @@ func (h *OAuthHandler) HandleCallback(c *gin.Context) {
 		return
 	}
 
-	if err := h.sessionStore.MarkComplete(ctx, state, newProfile.AccountID); err != nil {
+	if err := h.sessionStore.MarkComplete(ctx, state, oauthConnectionSummary(newProfile)); err != nil {
 		oauthLog.Error("oauth session mark complete failed",
 			zap.String("request_id", requestID),
 			zap.String("state", state),
@@ -478,7 +478,7 @@ func (h *OAuthHandler) GetDeviceStatus(c *gin.Context) {
 		return
 	}
 
-	if err := h.sessionStore.MarkComplete(ctx, deviceCode, newProfile.AccountID); err != nil {
+	if err := h.sessionStore.MarkComplete(ctx, deviceCode, oauthConnectionSummary(newProfile)); err != nil {
 		oauthLog.Error("codex session mark complete failed",
 			zap.String("request_id", requestID),
 			zap.String("device_code", deviceCode),
@@ -503,4 +503,19 @@ func (h *OAuthHandler) GetDeviceStatus(c *gin.Context) {
 		"status":     "ok",
 		"account_id": newProfile.AccountID,
 	})
+}
+
+func oauthConnectionSummary(profile domaincredential.Profile) domainoauth.ConnectionSummary {
+	expiresAt := profile.Expired.UTC()
+	lastRefreshAt := profile.LastRefreshAt.UTC()
+
+	return domainoauth.ConnectionSummary{
+		ID:            profile.ID,
+		AccountID:     profile.AccountID,
+		Email:         profile.Email,
+		Provider:      profile.Type,
+		ExpiresAt:     &expiresAt,
+		LastRefreshAt: &lastRefreshAt,
+		Enabled:       profile.Enabled,
+	}
 }

@@ -63,10 +63,15 @@ func NewDynamicRegistry(
 	if len(r.priority) == 0 {
 		r.priority = domainprovider.DefaultPriority
 	}
+	r.priority = filterActiveProviders(r.priority)
 
 	// Store provider configs
 	for id, pc := range config.ProviderConfigs {
-		r.providerConfigs[domainprovider.ProviderID(id)] = pc
+		providerID := domainprovider.ProviderID(id)
+		if !isActiveRuntimeProvider(providerID) {
+			continue
+		}
+		r.providerConfigs[providerID] = pc
 	}
 
 	// Initial load
@@ -94,6 +99,12 @@ func (r *dynamicRegistry) refreshProviders(ctx context.Context) {
 	// Build providers from available credential types
 	for _, providerType := range availableTypes {
 		providerID := domainprovider.ProviderID(providerType)
+		if !isActiveRuntimeProvider(providerID) {
+			r.logger.Info("provider excluded from personal runtime",
+				zap.String("provider_id", string(providerID)),
+			)
+			continue
+		}
 
 		if cfg, ok := r.providerConfigs[providerID]; ok && !cfg.Enabled {
 			r.logger.Info("provider disabled by config, skipping",

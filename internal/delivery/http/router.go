@@ -157,11 +157,13 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 
 	// Copilot OAuth device flow endpoints
 	if deps.CopilotOAuthProvider != nil {
-		copilotOAuthHandler := handler.NewCopilotOAuthHandler(
+		copilotDeviceFlow := usecaseoauth.NewCopilotDeviceFlowService(
 			deps.CopilotOAuthProvider,
-			deps.OAuthSessionStore, // Reuse session store
-			deps.CopilotOAuthSessionTTL,
+			deps.OAuthSessionStore,
 			deps.CopilotOAuthCompletionService,
+		)
+		copilotOAuthHandler := handler.NewCopilotOAuthHandler(
+			copilotDeviceFlow,
 		)
 		r.POST("/v1/internal/oauth/copilot-device-code", copilotOAuthHandler.StartDeviceFlow)
 		r.GET("/v1/internal/oauth/copilot-device-status", copilotOAuthHandler.GetDeviceStatus)
@@ -216,6 +218,12 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 		// Models endpoints
 		r.GET("/v1/models", modelsHandler.ListModels)
 		r.GET("/v1/models/:model", modelsHandler.GetModel)
+
+		// Ollama-compatible discovery endpoints (used by VS Code extensions like Continue)
+		ollamaHandler := handler.NewOllamaHandler(deps.CompletionService, completionLogger)
+		r.GET("/api/tags", ollamaHandler.Tags)
+		r.GET("/api/version", ollamaHandler.Version)
+		r.POST("/api/show", ollamaHandler.Show)
 	}
 
 	// Anthropic Messages API endpoint (proxies to Copilot)
