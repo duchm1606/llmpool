@@ -459,7 +459,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("routing.health.cooldown_duration", "30s")
 	v.SetDefault("routing.health.rate_limit_default_cooldown", "60s")
 	v.SetDefault("routing.account_rate_limit.requests_per_minute", 5)
-	v.SetDefault("routing.account_rate_limit.requests_per_5hour_session", 50)
+	v.SetDefault("routing.account_rate_limit.requests_per_5hour_session", 30)
 
 	// Messages API defaults (Anthropic-style adapter)
 	v.SetDefault("messages_api.small_model", "")                    // Empty = use requested model

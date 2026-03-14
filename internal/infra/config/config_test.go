@@ -612,8 +612,8 @@ func TestLoad_AccountRateLimitDefaults(t *testing.T) {
 	if cfg.Routing.AccountRateLimit.RequestsPerMinute != 5 {
 		t.Fatalf("expected requests_per_minute default 5, got %d", cfg.Routing.AccountRateLimit.RequestsPerMinute)
 	}
-	if cfg.Routing.AccountRateLimit.RequestsPer5HourSession != 50 {
-		t.Fatalf("expected requests_per_5hour_session default 50, got %d", cfg.Routing.AccountRateLimit.RequestsPer5HourSession)
+	if cfg.Routing.AccountRateLimit.RequestsPer5HourSession != 30 {
+		t.Fatalf("expected requests_per_5hour_session default 30, got %d", cfg.Routing.AccountRateLimit.RequestsPer5HourSession)
 	}
 }
 

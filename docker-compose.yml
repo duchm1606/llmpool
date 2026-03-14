@@ -20,7 +20,7 @@ services:
       dockerfile: Dockerfile
     container_name: llmpool-app
     ports:
-      - "8080:8080"
+      - "8081:8080"
     environment:
       LLMPOOL_SERVER_HOST: 0.0.0.0
       LLMPOOL_SERVER_PORT: 8080
@@ -42,9 +42,9 @@ services:
       dockerfile: Dockerfile
     container_name: llmpool-web
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
-      NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8081
       NEXT_PUBLIC_USE_MOCK_DATA: "false"
     depends_on:
       app:
@@ -58,7 +58,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
@@ -72,7 +72,7 @@ services:
     image: redis:7-alpine
     container_name: llmpool-redis
     ports:
-      - "6379:6379"
+      - "6381:6379"
     volumes:
       - redis_data:/data
 

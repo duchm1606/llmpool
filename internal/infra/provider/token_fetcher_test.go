@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	domaincompletion "github.com/duchoang/llmpool/internal/domain/completion"
 	domaincredential "github.com/duchoang/llmpool/internal/domain/credential"
 	domainquota "github.com/duchoang/llmpool/internal/domain/quota"
 	usecasecompletion "github.com/duchoang/llmpool/internal/usecase/completion"
@@ -87,6 +88,40 @@ func TestPooledTokenFetcher_GetNextTokenWithInfo_UsesUserInitiatorForFirstSessio
 	}
 }
 
+func TestPooledTokenFetcher_GetNextTokenWithInfo_UsesAgentInitiatorAfterFirstSessionRequest(t *testing.T) {
+	t.Parallel()
+
+	fetcher := NewPooledTokenFetcher(
+		&stubCredentialRepo{profiles: []domaincredential.Profile{newTestProfile("cred-1", "acct-1", "copilot", "user@example.com")}},
+		&stubDecryptor{},
+		zap.NewNop(),
+		PooledTokenFetcherConfig{
+			Limiter: &stubRateLimiter{decisions: map[string][]AccountRateLimitDecision{
+				"acct-1": {
+					{Allowed: true, Initiator: userAccountInitiator},
+					{Allowed: true, Initiator: defaultAccountInitiator},
+				},
+			}},
+		},
+	)
+
+	_, firstMeta, err := fetcher.GetNextTokenWithInfo(context.Background(), "copilot")
+	if err != nil {
+		t.Fatalf("GetNextTokenWithInfo() first error = %v", err)
+	}
+	if firstMeta.Initiator != userAccountInitiator {
+		t.Fatalf("unexpected first initiator: got %q want %q", firstMeta.Initiator, userAccountInitiator)
+	}
+
+	_, secondMeta, err := fetcher.GetNextTokenWithInfo(context.Background(), "copilot")
+	if err != nil {
+		t.Fatalf("GetNextTokenWithInfo() second error = %v", err)
+	}
+	if secondMeta.Initiator != defaultAccountInitiator {
+		t.Fatalf("unexpected second initiator: got %q want %q", secondMeta.Initiator, defaultAccountInitiator)
+	}
+}
+
 func TestPooledTokenFetcher_GetNextTokenWithInfo_SkipsRateLimitedAccount(t *testing.T) {
 	t.Parallel()
 
@@ -135,6 +170,13 @@ func TestPooledTokenFetcher_GetNextTokenWithInfo_ReturnsErrorWhenAllAccountsLimi
 	if err == nil {
 		t.Fatal("expected error when all accounts are rate limited")
 	}
+	var apiErr *domaincompletion.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected APIError, got %T", err)
+	}
+	if apiErr.HTTPStatus != 429 {
+		t.Fatalf("unexpected status: got %d want %d", apiErr.HTTPStatus, 429)
+	}
 }
 
 func TestPooledTokenFetcher_GetNextTokenWithInfo_ReturnsLimiterError(t *testing.T) {
@@ -176,6 +218,36 @@ func TestPooledTokenFetcher_GetNextTokenWithInfoForQuotaMode_BypassDoesNotConsum
 	}
 	if len(limiter.consume) != 1 || limiter.consume[0] {
 		t.Fatalf("expected consumeSessionQuota=false, got %+v", limiter.consume)
+	}
+}
+
+func TestPooledTokenFetcher_GetNextTokenWithInfo_FallsBackToAnotherAccountWhenSessionQuotaExhausted(t *testing.T) {
+	t.Parallel()
+
+	fetcher := NewPooledTokenFetcher(
+		&stubCredentialRepo{profiles: []domaincredential.Profile{
+			newTestProfile("cred-1", "acct-1", "copilot", "first@example.com"),
+			newTestProfile("cred-2", "acct-2", "copilot", "second@example.com"),
+		}},
+		&stubDecryptor{},
+		zap.NewNop(),
+		PooledTokenFetcherConfig{
+			Limiter: &stubRateLimiter{decisions: map[string][]AccountRateLimitDecision{
+				"acct-1": {{Allowed: false, Initiator: defaultAccountInitiator}},
+				"acct-2": {{Allowed: true, Initiator: userAccountInitiator}},
+			}},
+		},
+	)
+
+	_, meta, err := fetcher.GetNextTokenWithInfo(context.Background(), "copilot")
+	if err != nil {
+		t.Fatalf("GetNextTokenWithInfo() error = %v", err)
+	}
+	if meta.CredentialID != "cred-2" {
+		t.Fatalf("unexpected credential id: %q", meta.CredentialID)
+	}
+	if meta.Initiator != userAccountInitiator {
+		t.Fatalf("unexpected initiator: got %q want %q", meta.Initiator, userAccountInitiator)
 	}
 }
 

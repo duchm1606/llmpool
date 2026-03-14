@@ -73,6 +73,42 @@ func TestSessionQuotaModeForRequest(t *testing.T) {
 	}
 }
 
+func TestService_ValidateRequest_UsesQuotaBypass(t *testing.T) {
+	t.Parallel()
+
+	router := &mockServiceRouter{
+		decisions: []*domainprovider.RoutingDecision{{
+			ProviderID: domainprovider.ProviderCopilot,
+			BaseURL:    "https://api.githubcopilot.com",
+			Token:      "copilot-token",
+		}},
+	}
+
+	svc := NewService(
+		router,
+		&mockServiceRegistry{},
+		&mockServiceHealthTracker{},
+		&mockServiceClient{},
+		&mockCredentialRefresher{},
+		DefaultServiceConfig(),
+		zap.NewNop(),
+	)
+
+	err := svc.ValidateRequest(context.Background(), domaincompletion.ChatCompletionRequest{
+		Model:    "gpt-5",
+		Messages: []domaincompletion.Message{{Role: "user", Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("ValidateRequest() error = %v", err)
+	}
+	if len(router.quotaModes) != 1 {
+		t.Fatalf("expected exactly one routing call, got %d", len(router.quotaModes))
+	}
+	if router.quotaModes[0] != SessionQuotaBypass {
+		t.Fatalf("unexpected quota mode: got %q want %q", router.quotaModes[0], SessionQuotaBypass)
+	}
+}
+
 type mockServiceRegistry struct{}
 
 func (m *mockServiceRegistry) GetProvider(id domainprovider.ProviderID) (*domainprovider.Provider, bool) {

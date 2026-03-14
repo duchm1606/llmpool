@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	domaincompletion "github.com/duchoang/llmpool/internal/domain/completion"
 	domaincredential "github.com/duchoang/llmpool/internal/domain/credential"
 	usecasecompletion "github.com/duchoang/llmpool/internal/usecase/completion"
 	"go.uber.org/zap"
@@ -218,6 +219,9 @@ func (f *PooledTokenFetcher) GetNextTokenWithInfoForQuotaMode(
 		return decrypted.AccessToken, meta, nil
 	}
 
+	if quotaMode == usecasecompletion.SessionQuotaConsume {
+		return "", meta, domaincompletion.ErrRateLimited("the 5-hour session quota window resets")
+	}
 	return "", meta, fmt.Errorf("no enabled credentials available within configured account rate limits for provider: %s", providerType)
 }
 

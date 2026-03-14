@@ -104,9 +104,18 @@ func (l *redisAccountRateLimiter) Reserve(
 			if consumeSessionQuota {
 				sessionState.RequestCount++
 			}
-			if consumeSessionQuota && !sessionState.UserInitiatorUsed {
+			if consumeSessionQuota && shouldUseUserInitiator(sessionState) {
 				sessionState.UserInitiatorUsed = true
 				decision.Initiator = userAccountInitiator
+			}
+
+			if consumeSessionQuota {
+				l.logger.Info("account session quota reserved",
+					zap.String("provider_type", providerType),
+					zap.String("account_id", trimmedAccountID),
+					zap.Int("session_slot", sessionState.RequestCount),
+					zap.String("final_initiator", decision.Initiator),
+				)
 			}
 
 			sessionPayload, err := json.Marshal(sessionState)
@@ -130,6 +139,10 @@ func (l *redisAccountRateLimiter) Reserve(
 	}
 
 	return AccountRateLimitDecision{}, fmt.Errorf("reserve account rate limit: transaction conflict")
+}
+
+func shouldUseUserInitiator(state accountSessionState) bool {
+	return !state.UserInitiatorUsed && state.RequestCount == 1
 }
 
 func (l *redisAccountRateLimiter) GetUsage(

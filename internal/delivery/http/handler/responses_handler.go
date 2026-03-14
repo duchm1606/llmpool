@@ -520,6 +520,12 @@ func applyResponsesCopilotHeaders(req *http.Request, decision *domainprovider.Ro
 		initiator = "user"
 	}
 	req.Header.Set("X-Initiator", initiator)
+	logger := zap.L()
+	logger.Info("applied responses initiator header",
+		zap.String("provider", string(decision.ProviderID)),
+		zap.String("credential_account_id", decision.CredentialAccountID),
+		zap.String("final_initiator", initiator),
+	)
 
 	for k, v := range decision.Headers {
 		req.Header.Set(k, v)

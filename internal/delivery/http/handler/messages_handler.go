@@ -142,6 +142,11 @@ func (h *MessagesHandler) CreateMessage(c *gin.Context) {
 	decision, err := h.router.RouteWithHint(ctx, req.Model, "copilot", anthropicSessionQuotaMode(req), nil)
 	if err != nil {
 		h.logger.Error("routing failed", zap.Error(err))
+		var apiErr *domaincompletion.APIError
+		if errors.As(err, &apiErr) {
+			h.respondError(c, apiErr.HTTPStatus, apiErr.Type, apiErr.Message)
+			return
+		}
 		h.respondError(c, http.StatusServiceUnavailable, "api_error", "no available provider: "+err.Error())
 		return
 	}
@@ -752,7 +757,8 @@ func extractSSEDataFromBlock(eventBlock []byte) []byte {
 }
 
 // applyCopilotHeaders applies Copilot-specific headers to the HTTP request.
-// Always sets X-Initiator: agent for all requests.
+// X-Initiator follows the routing decision: first user-turn request may use
+// "user", and subsequent requests use the default "agent" initiator.
 func (h *MessagesHandler) applyCopilotHeaders(req *http.Request, decision *domainprovider.RoutingDecision) {
 	if decision == nil {
 		return

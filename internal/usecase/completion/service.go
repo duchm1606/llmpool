@@ -90,7 +90,7 @@ func (s *service) ValidateRequest(ctx context.Context, req domaincompletion.Chat
 		return err
 	}
 
-	_, err := s.router.RouteWithHint(ctx, req.Model, req.ProviderHint, SessionQuotaModeForRequest(req), nil)
+	_, err := s.router.RouteWithHint(ctx, req.Model, req.ProviderHint, SessionQuotaBypass, nil)
 	if err != nil {
 		var apiErr *domaincompletion.APIError
 		if errors.As(err, &apiErr) {
