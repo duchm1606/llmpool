@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { HeatmapDataPoint } from '@/types/api';
 
 interface ActivityHeatmapProps {
@@ -17,14 +17,16 @@ type GridCell = {
 type WeekColumn = {
   start: Date;
   cells: GridCell[];
+  firstVisibleDate: Date | null;
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const TOOLTIP_DELAY_MS = 120;
 const MONTH_LABELS = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
 const DOW_LABELS = ['', 'M', '', 'W', '', 'F', ''];
 
 function toUTCDate(dateString: string): Date {
-  const [y, m, d] = dateString.split('-').map((part) => Number(part));
+  const [y, m, d] = dateString.slice(0, 10).split('-').map((part) => Number(part));
   return new Date(Date.UTC(y, (m || 1) - 1, d || 1));
 }
 
@@ -74,6 +76,18 @@ function activityLevelColor(count: number, maxCount: number): string {
 }
 
 export function ActivityHeatmap({ data }: ActivityHeatmapProps) {
+  const [activeTooltipKey, setActiveTooltipKey] = useState<string | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const model = useMemo(() => {
     const dateCount = new Map<string, number>();
     let firstDate: Date | null = null;
@@ -126,19 +140,32 @@ export function ActivityHeatmap({ data }: ActivityHeatmapProps) {
         });
       }
 
+      const firstVisibleDate = cells.find((cell) => cell.inRange)?.date ?? null;
+
       columns.push({
         start: cursor,
         cells,
+        firstVisibleDate,
       });
     }
 
     const monthLabels = columns.map((column, index) => {
-      if (index === 0) {
-        return MONTH_LABELS[column.start.getUTCMonth()];
+      const labelDate = column.firstVisibleDate;
+      if (!labelDate) {
+        return '';
       }
 
-      const prevMonth = columns[index - 1].start.getUTCMonth();
-      const currentMonth = column.start.getUTCMonth();
+      if (index === 0) {
+        return MONTH_LABELS[labelDate.getUTCMonth()];
+      }
+
+      const previousVisibleDate = columns[index - 1].firstVisibleDate;
+      if (!previousVisibleDate) {
+        return MONTH_LABELS[labelDate.getUTCMonth()];
+      }
+
+      const prevMonth = previousVisibleDate.getUTCMonth();
+      const currentMonth = labelDate.getUTCMonth();
       if (currentMonth !== prevMonth) {
         return MONTH_LABELS[currentMonth];
       }
@@ -148,15 +175,39 @@ export function ActivityHeatmap({ data }: ActivityHeatmapProps) {
     return { columns, monthLabels, maxCount };
   }, [data]);
 
+  const clearPendingTooltip = () => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+  };
+
+  const showTooltipWithDelay = (dateKey: string, target: HTMLElement) => {
+    clearPendingTooltip();
+    hoverTimeoutRef.current = setTimeout(() => {
+      const rect = target.getBoundingClientRect();
+      setTooltipPos({ x: rect.left + rect.width / 2, y: rect.top });
+      setActiveTooltipKey(dateKey);
+      hoverTimeoutRef.current = null;
+    }, TOOLTIP_DELAY_MS);
+  };
+
+  const hideTooltip = () => {
+    clearPendingTooltip();
+    setActiveTooltipKey(null);
+    setTooltipPos(null);
+  };
+
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+    <div className="overflow-visible bg-white rounded-lg shadow-sm border border-gray-200 p-4">
       <h3 className="text-sm font-medium text-gray-700 mb-4">Activity (Last 365 Days)</h3>
 
       {model.columns.length === 0 ? (
         <div className="text-sm text-gray-500">No activity data.</div>
       ) : (
-        <div className="overflow-x-auto">
-          <div className="inline-block min-w-max whitespace-nowrap mx-auto">
+        <div className="overflow-x-auto overflow-y-visible">
+          <div className="flex justify-center px-2">
+            <div className="inline-block min-w-max whitespace-nowrap mx-auto">
             <div className="flex mb-2">
               <div className="w-8 mr-2" />
               {model.monthLabels.map((label, idx) => (
@@ -189,12 +240,23 @@ export function ActivityHeatmap({ data }: ActivityHeatmapProps) {
                         : `${cell.count.toLocaleString('en-US')} request${cell.count > 1 ? 's' : ''}`;
 
                     return (
-                      <div
-                        key={cell.dateKey}
-                        className="w-3 h-3 mb-1 rounded-sm cursor-pointer transition-all hover:ring-2 hover:ring-gray-300"
-                        style={{ backgroundColor: color }}
-                        title={`${formatFullDate(cell.date)}\n${detail}`}
-                      />
+                      <div key={cell.dateKey} className="mb-1">
+                        <div
+                          className="block w-3 h-3 rounded-sm transition-all hover:ring-2 hover:ring-gray-300"
+                          style={{ backgroundColor: color }}
+                          onMouseEnter={(e) => showTooltipWithDelay(cell.dateKey, e.currentTarget)}
+                          onMouseLeave={hideTooltip}
+                        />
+                        {activeTooltipKey === cell.dateKey && tooltipPos ? (
+                          <div
+                            className="pointer-events-none fixed z-50 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md bg-gray-900 px-2 py-1 text-xs text-white shadow-lg"
+                            style={{ left: tooltipPos.x, top: tooltipPos.y - 6 }}
+                          >
+                            <div>{formatFullDate(cell.date)}</div>
+                            <div>{detail}</div>
+                          </div>
+                        ) : null}
+                      </div>
                     );
                   })}
                 </div>
@@ -209,6 +271,7 @@ export function ActivityHeatmap({ data }: ActivityHeatmapProps) {
                 ))}
               </div>
               <span>More</span>
+            </div>
             </div>
           </div>
         </div>

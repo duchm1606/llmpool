@@ -10,6 +10,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var validDashboardPeriods = map[string]bool{"today": true, "7d": true, "30d": true, "90d": true, "365d": true}
+
 // UsageStatsHandler handles usage statistics endpoints.
 type UsageStatsHandler struct {
 	statsService     usecaseusage.StatsService
@@ -32,18 +34,13 @@ func NewUsageStatsHandler(
 
 // GetDashboardStats handles GET /v1/internal/usage/stats
 func (h *UsageStatsHandler) GetDashboardStats(c *gin.Context) {
-	period := c.DefaultQuery("period", "today")
-
-	// Validate period
-	validPeriods := map[string]bool{"today": true, "7d": true, "30d": true, "90d": true, "365d": true}
-	if !validPeriods[period] {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "invalid period, must be one of: today, 7d, 30d, 90d, 365d",
-		})
+	query, err := parseDashboardStatsQuery(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	stats, err := h.statsService.GetDashboardStats(c.Request.Context(), period)
+	stats, err := h.statsService.GetDashboardStats(c.Request.Context(), query)
 	if err != nil {
 		h.logger.Error("failed to get dashboard stats", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get stats"})
@@ -51,6 +48,67 @@ func (h *UsageStatsHandler) GetDashboardStats(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, stats)
+}
+
+func parseDashboardStatsQuery(c *gin.Context) (usecaseusage.DashboardStatsQuery, error) {
+	period := c.DefaultQuery("period", "today")
+	startDateRaw := c.Query("startDate")
+	endDateRaw := c.Query("endDate")
+
+	hasStartDate := startDateRaw != ""
+	hasEndDate := endDateRaw != ""
+	if hasStartDate || hasEndDate {
+		if !hasStartDate || !hasEndDate {
+			return usecaseusage.DashboardStatsQuery{}, errBadDashboardQuery("startDate and endDate must both be provided")
+		}
+
+		startDate, err := parseDashboardTimestamp(startDateRaw)
+		if err != nil {
+			return usecaseusage.DashboardStatsQuery{}, errBadDashboardQuery("invalid startDate format, use RFC3339 or unix milliseconds")
+		}
+
+		endDate, err := parseDashboardTimestamp(endDateRaw)
+		if err != nil {
+			return usecaseusage.DashboardStatsQuery{}, errBadDashboardQuery("invalid endDate format, use RFC3339 or unix milliseconds")
+		}
+
+		return usecaseusage.DashboardStatsQuery{
+			Period:    period,
+			StartDate: &startDate,
+			EndDate:   &endDate,
+		}, nil
+	}
+
+	if !validDashboardPeriods[period] {
+		return usecaseusage.DashboardStatsQuery{}, errBadDashboardQuery("invalid period, must be one of: today, 7d, 30d, 90d, 365d")
+	}
+
+	return usecaseusage.DashboardStatsQuery{Period: period}, nil
+}
+
+func parseDashboardTimestamp(value string) (time.Time, error) {
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed.UTC(), nil
+	}
+
+	millis, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	return time.UnixMilli(millis).UTC(), nil
+}
+
+func errBadDashboardQuery(message string) error {
+	return &dashboardQueryError{message: message}
+}
+
+type dashboardQueryError struct {
+	message string
+}
+
+func (e *dashboardQueryError) Error() string {
+	return e.message
 }
 
 // ListAuditLogs handles GET /v1/internal/usage/audit

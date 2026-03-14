@@ -181,6 +181,39 @@ type BackendCopilotUsagesResponse = {
 
 const microsToUSD = (micros: number): number => micros / 1_000_000;
 
+function startOfUTCDay(date: Date): Date {
+	return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+function buildUTCDateRange(days: number): { startDate: string; endDate: string } {
+	const safeDays = Math.max(1, Math.floor(days));
+	const now = new Date();
+	const end = now.toISOString();
+	const start = startOfUTCDay(now);
+	start.setUTCDate(start.getUTCDate() - (safeDays - 1));
+
+	return {
+		startDate: start.toISOString(),
+		endDate: end,
+	};
+}
+
+function buildDashboardStatsEndpoint(params: { period?: string; startDate?: string; endDate?: string }): string {
+	const query = new URLSearchParams();
+	if (params.period) {
+		query.set('period', params.period);
+	}
+	if (params.startDate) {
+		query.set('startDate', params.startDate);
+	}
+	if (params.endDate) {
+		query.set('endDate', params.endDate);
+	}
+
+	const queryString = query.toString();
+	return `/v1/internal/usage/stats${queryString ? `?${queryString}` : ''}`;
+}
+
 function periodForDays(days: number): string {
   if (days <= 1) {
     return 'today';
@@ -237,7 +270,7 @@ class ApiClient {
 
   async getOverview(period: string = '24h'): Promise<OverviewStats> {
     const mappedPeriod = period === '24h' ? 'today' : period;
-    const stats = await this.fetch<BackendDashboardStats>(`/v1/internal/usage/stats?period=${mappedPeriod}`);
+    const stats = await this.fetch<BackendDashboardStats>(buildDashboardStatsEndpoint({ period: mappedPeriod }));
     const overview = stats.overview;
     const total = overview.total_requests || 0;
 
@@ -254,8 +287,13 @@ class ApiClient {
   }
 
   async getHeatmap(days: number = 365): Promise<HeatmapDataPoint[]> {
-    const period = periodForDays(days);
-    const stats = await this.fetch<BackendDashboardStats>(`/v1/internal/usage/stats?period=${period}`);
+    const range = buildUTCDateRange(days);
+    const stats = await this.fetch<BackendDashboardStats>(
+      buildDashboardStatsEndpoint({
+        startDate: range.startDate,
+        endDate: range.endDate,
+      })
+    );
     return (stats.daily_stats || []).map((point) => ({
       date: point.day,
       count: point.request_count,
@@ -264,7 +302,7 @@ class ApiClient {
 
   async getTimeSeries(granularity: 'hourly' | 'daily' = 'daily', days: number = 30): Promise<TimeSeriesPoint[]> {
     const period = granularity === 'hourly' ? (days <= 1 ? 'today' : '7d') : periodForDays(days);
-    const stats = await this.fetch<BackendDashboardStats>(`/v1/internal/usage/stats?period=${period}`);
+    const stats = await this.fetch<BackendDashboardStats>(buildDashboardStatsEndpoint({ period }));
     if (granularity === 'hourly') {
       return (stats.hourly_stats || []).map((point) => ({
         timestamp: point.hour,
@@ -283,7 +321,7 @@ class ApiClient {
 
   async getModelStats(period: string = '24h'): Promise<ModelStats[]> {
     const mappedPeriod = period === '24h' ? 'today' : period;
-    const stats = await this.fetch<BackendDashboardStats>(`/v1/internal/usage/stats?period=${mappedPeriod}`);
+    const stats = await this.fetch<BackendDashboardStats>(buildDashboardStatsEndpoint({ period: mappedPeriod }));
     return (stats.model_stats || []).map((model) => ({
       model: model.model,
       provider: inferProvider(model.model),
@@ -301,7 +339,7 @@ class ApiClient {
 
   async getCredentialStats(period: string = '24h'): Promise<CredentialStats[]> {
     const mappedPeriod = period === '24h' ? 'today' : period;
-    const stats = await this.fetch<BackendDashboardStats>(`/v1/internal/usage/stats?period=${mappedPeriod}`);
+    const stats = await this.fetch<BackendDashboardStats>(buildDashboardStatsEndpoint({ period: mappedPeriod }));
     return (stats.credential_stats || []).map((credential) => ({
       credential_id: credential.credential_id,
       credential_type: credential.credential_type,

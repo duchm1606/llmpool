@@ -28,11 +28,6 @@ func NewStatsService(
 	}
 }
 
-// periodToTimeRange converts a period string to start/end times.
-func periodToTimeRange(period string) (start, end time.Time, err error) {
-	return periodToTimeRangeFromNow(time.Now().UTC(), period)
-}
-
 func periodToTimeRangeFromNow(now time.Time, period string) (start, end time.Time, err error) {
 	now = now.UTC()
 	end = now
@@ -56,9 +51,32 @@ func periodToTimeRangeFromNow(now time.Time, period string) (start, end time.Tim
 	return start, end, nil
 }
 
+func queryToTimeRange(now time.Time, query DashboardStatsQuery) (time.Time, time.Time, error) {
+	if query.StartDate != nil || query.EndDate != nil {
+		if query.StartDate == nil || query.EndDate == nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("startDate and endDate must both be provided")
+		}
+
+		startTime := query.StartDate.UTC()
+		endTime := query.EndDate.UTC()
+		if !startTime.Before(endTime) {
+			return time.Time{}, time.Time{}, fmt.Errorf("startDate must be before endDate")
+		}
+
+		return startTime, endTime, nil
+	}
+
+	period := query.Period
+	if period == "" {
+		period = "today"
+	}
+
+	return periodToTimeRangeFromNow(now, period)
+}
+
 // GetDashboardStats returns dashboard stats for the given period.
-func (s *statsService) GetDashboardStats(ctx context.Context, period string) (*domainusage.DashboardStats, error) {
-	startTime, endTime, err := periodToTimeRange(period)
+func (s *statsService) GetDashboardStats(ctx context.Context, query DashboardStatsQuery) (*domainusage.DashboardStats, error) {
+	startTime, endTime, err := queryToTimeRange(time.Now().UTC(), query)
 	if err != nil {
 		return nil, err
 	}

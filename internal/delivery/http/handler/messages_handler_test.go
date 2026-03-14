@@ -38,12 +38,12 @@ func TestAnthropicSessionQuotaMode(t *testing.T) {
 			want: usecasecompletion.SessionQuotaConsume,
 		},
 		{
-			name: "single user tool result follow up consumes",
+			name: "single user tool result follow up bypasses",
 			req: anthropic.MessagesRequest{Messages: []anthropic.Message{{
 				Role:    "user",
 				Content: []anthropic.ContentBlock{{Type: "tool_result", ToolUseID: "tool-1", Content: "done"}},
 			}}},
-			want: usecasecompletion.SessionQuotaConsume,
+			want: usecasecompletion.SessionQuotaBypass,
 		},
 	}
 

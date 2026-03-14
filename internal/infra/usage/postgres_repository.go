@@ -72,12 +72,12 @@ func (r *PostgresRepository) List(ctx context.Context, filter usecaseusage.Audit
 			input_price_micros, output_price_micros, total_price_micros,
 			status, error_message, started_at, completed_at, duration_ms, stream, created_at
 		FROM usage_audit_logs
-		WHERE created_at >= $1 AND created_at < $2
+		WHERE completed_at >= $1 AND completed_at < $2
 		  AND ($3 = '' OR model = $3)
 		  AND ($4 = '' OR provider = $4)
 		  AND ($5 = '' OR credential_id = $5)
 		  AND ($6 = '' OR status = $6)
-		ORDER BY created_at DESC
+		ORDER BY completed_at DESC
 		LIMIT $7 OFFSET $8
 	`
 
@@ -105,7 +105,7 @@ func (r *PostgresRepository) List(ctx context.Context, filter usecaseusage.Audit
 func (r *PostgresRepository) Count(ctx context.Context, filter usecaseusage.AuditLogFilter) (int64, error) {
 	query := `
 		SELECT COUNT(*) FROM usage_audit_logs
-		WHERE created_at >= $1 AND created_at < $2
+		WHERE completed_at >= $1 AND completed_at < $2
 		  AND ($3 = '' OR model = $3)
 		  AND ($4 = '' OR provider = $4)
 		  AND ($5 = '' OR credential_id = $5)
@@ -179,7 +179,7 @@ func (r *PostgresRepository) AggregateByModel(ctx context.Context, startTime, en
 			COUNT(*) FILTER (WHERE status = 'failed') as failed_count,
 			COUNT(*) FILTER (WHERE status = 'canceled') as canceled_count
 		FROM usage_audit_logs
-		WHERE created_at >= $1 AND created_at < $2
+		WHERE completed_at >= $1 AND completed_at < $2
 		GROUP BY model
 		ORDER BY request_count DESC
 	`
@@ -231,7 +231,7 @@ func (r *PostgresRepository) AggregateByCredential(ctx context.Context, startTim
 			COUNT(*) FILTER (WHERE status = 'failed') as failed_count,
 			COUNT(*) FILTER (WHERE status = 'canceled') as canceled_count
 		FROM usage_audit_logs
-		WHERE created_at >= $1 AND created_at < $2
+		WHERE completed_at >= $1 AND completed_at < $2
 		GROUP BY credential_id, credential_type, credential_account_id
 		ORDER BY request_count DESC
 	`
@@ -272,15 +272,15 @@ func (r *PostgresRepository) AggregateByCredential(ctx context.Context, startTim
 func (r *PostgresRepository) AggregateHourly(ctx context.Context, startTime, endTime time.Time) ([]domainusage.HourlyStats, error) {
 	query := `
 		SELECT
-			date_trunc('hour', created_at) as hour,
+			date_trunc('hour', completed_at) as hour,
 			COUNT(*) as request_count,
 			COALESCE(SUM(total_tokens), 0) as total_tokens,
 			COALESCE(SUM(total_price_micros), 0) as total_price_micros,
 			COUNT(*) FILTER (WHERE status = 'done') as success_count,
 			COUNT(*) FILTER (WHERE status = 'failed') as failed_count
 		FROM usage_audit_logs
-		WHERE created_at >= $1 AND created_at < $2
-		GROUP BY date_trunc('hour', created_at)
+		WHERE completed_at >= $1 AND completed_at < $2
+		GROUP BY date_trunc('hour', completed_at)
 		ORDER BY hour
 	`
 
@@ -314,15 +314,15 @@ func (r *PostgresRepository) AggregateHourly(ctx context.Context, startTime, end
 func (r *PostgresRepository) AggregateDaily(ctx context.Context, startTime, endTime time.Time) ([]domainusage.DailyStats, error) {
 	query := `
 		SELECT
-			date_trunc('day', created_at) as day,
+			date_trunc('day', completed_at) as day,
 			COUNT(*) as request_count,
 			COALESCE(SUM(total_tokens), 0) as total_tokens,
 			COALESCE(SUM(total_price_micros), 0) as total_price_micros,
 			COUNT(*) FILTER (WHERE status = 'done') as success_count,
 			COUNT(*) FILTER (WHERE status = 'failed') as failed_count
 		FROM usage_audit_logs
-		WHERE created_at >= $1 AND created_at < $2
-		GROUP BY date_trunc('day', created_at)
+		WHERE completed_at >= $1 AND completed_at < $2
+		GROUP BY date_trunc('day', completed_at)
 		ORDER BY day
 	`
 
@@ -367,7 +367,7 @@ func (r *PostgresRepository) GetOverview(ctx context.Context, startTime, endTime
 			COUNT(*) FILTER (WHERE status = 'canceled') as canceled_count,
 			COALESCE(AVG(duration_ms), 0) as avg_duration_ms
 		FROM usage_audit_logs
-		WHERE created_at >= $1 AND created_at < $2
+		WHERE completed_at >= $1 AND completed_at < $2
 	`
 
 	var o domainusage.Overview

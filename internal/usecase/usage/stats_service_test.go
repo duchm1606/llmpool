@@ -157,3 +157,81 @@ func TestFillMissingDailyStats(t *testing.T) {
 		}
 	})
 }
+
+func TestQueryToTimeRange(t *testing.T) {
+	now := time.Date(2026, 3, 7, 15, 4, 5, 0, time.UTC)
+	start := time.Date(2026, 2, 13, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 3, 14, 18, 28, 32, 898000000, time.UTC)
+
+	tests := []struct {
+		name      string
+		query     DashboardStatsQuery
+		wantStart time.Time
+		wantEnd   time.Time
+		wantErr   bool
+	}{
+		{
+			name: "uses explicit date range when provided",
+			query: DashboardStatsQuery{
+				Period:    "365d",
+				StartDate: &start,
+				EndDate:   &end,
+			},
+			wantStart: start,
+			wantEnd:   end,
+		},
+		{
+			name: "falls back to period when range absent",
+			query: DashboardStatsQuery{
+				Period: "7d",
+			},
+			wantStart: time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
+			wantEnd:   now,
+		},
+		{
+			name:      "defaults to today when query empty",
+			query:     DashboardStatsQuery{},
+			wantStart: time.Date(2026, 3, 7, 0, 0, 0, 0, time.UTC),
+			wantEnd:   now,
+		},
+		{
+			name: "rejects missing end date",
+			query: DashboardStatsQuery{
+				StartDate: &start,
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects non increasing range",
+			query: DashboardStatsQuery{
+				StartDate: &end,
+				EndDate:   &start,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotStart, gotEnd, err := queryToTimeRange(now, tt.query)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if !gotStart.Equal(tt.wantStart) {
+				t.Fatalf("start = %v, want %v", gotStart, tt.wantStart)
+			}
+
+			if !gotEnd.Equal(tt.wantEnd) {
+				t.Fatalf("end = %v, want %v", gotEnd, tt.wantEnd)
+			}
+		})
+	}
+}

@@ -71,11 +71,19 @@ type AuditLogFilter struct {
 	Status       string
 }
 
+// DashboardStatsQuery describes query options for dashboard analytics.
+type DashboardStatsQuery struct {
+	Period    string
+	StartDate *time.Time
+	EndDate   *time.Time
+}
+
 // StatsService provides dashboard statistics.
 type StatsService interface {
-	// GetDashboardStats returns dashboard stats for the given period.
-	// Period can be: "today", "7d", "30d", "90d", "365d"
-	GetDashboardStats(ctx context.Context, period string) (*domainusage.DashboardStats, error)
+	// GetDashboardStats returns dashboard stats for the given period or explicit range.
+	// Period can be: "today", "7d", "30d", "90d", "365d".
+	// When StartDate and EndDate are provided, they take precedence over Period.
+	GetDashboardStats(ctx context.Context, query DashboardStatsQuery) (*domainusage.DashboardStats, error)
 
 	// GetAuditLogs returns paginated audit logs.
 	GetAuditLogs(ctx context.Context, filter AuditLogFilter) ([]domainusage.AuditLog, int64, error)

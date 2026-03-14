@@ -1,0 +1,3 @@
+DROP INDEX IF EXISTS idx_usage_audit_logs_completed_at_credential;
+DROP INDEX IF EXISTS idx_usage_audit_logs_completed_at_model;
+DROP INDEX IF EXISTS idx_usage_audit_logs_completed_at;
