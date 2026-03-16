@@ -86,7 +86,7 @@ routing:
     rate_limit_default_cooldown: 60s
   account_rate_limit:
     requests_per_minute: 5
-    requests_per_5hour_session: 50
+    requests_per_5hour_session: 30
 
 # Provider configurations
 # Note: Models are now loaded dynamically from internal/infra/provider/models.go
