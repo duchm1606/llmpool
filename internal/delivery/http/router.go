@@ -105,7 +105,7 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 	r.Use(middleware.SecurityLogger(requestLogger))
 	r.Use(middleware.Recovery(recoveryLogger))
 
-	// Apply CORS middleware for internal usage endpoints if configured
+	// Apply CORS middleware globally if configured
 	if deps.CORSConfig != nil && deps.CORSConfig.Enabled && len(deps.CORSConfig.AllowedOrigins) > 0 {
 		corsConfig := middleware.CORSConfig{
 			AllowedOrigins: deps.CORSConfig.AllowedOrigins,
@@ -113,12 +113,7 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 			AllowedHeaders: []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Request-ID"},
 			MaxAge:         86400,
 		}
-		r.Use(middleware.CORSForRoutes(
-			corsConfig,
-			"/v1/internal/usage",
-			"/v1/internal/oauth",
-			"/v1/internal/auth-profiles",
-		))
+		r.Use(middleware.CORS(corsConfig))
 	}
 
 	healthHandler := handler.NewHealthHandler(deps.HealthService)

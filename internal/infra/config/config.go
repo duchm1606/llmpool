@@ -476,5 +476,5 @@ func setDefaults(v *viper.Viper) {
 
 	// CORS defaults
 	v.SetDefault("cors.enabled", true)
-	v.SetDefault("cors.allowed_origins", []string{"http://localhost:3000", "http://localhost:5173"})
+	v.SetDefault("cors.allowed_origins", []string{"http://localhost:3000", "http://localhost:3001"})
 }
