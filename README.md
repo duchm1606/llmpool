@@ -26,6 +26,7 @@ docker compose up --build
 ```
 
 This starts:
+
 - `postgres`
 - `redis`
 - `migrate` (one-shot `up` over `db/migrations`)
@@ -44,5 +45,5 @@ make down
 
 ### Access
 
-- API: `http://localhost:8080`
-- Dashboard: `http://localhost:3000`
+- API: `http://localhost:8081`
+- Dashboard: `http://localhost:3001`
